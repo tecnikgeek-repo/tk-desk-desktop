@@ -40,7 +40,7 @@ def main():
     app = QApplication(sys.argv)
     app.licenza = pro.crea_licenza(VERSION)
     from tkdesk import app as finestre
-    from tkdesk.kit import AboutDialog, righe_benvenuto
+    from tkdesk.kit import righe_benvenuto
     from tkdesk.sessione import Motore
     from tkdesk.tk_licenza_qt import BenvenutoDialog, LicenzeDialog
     app.setStyleSheet(finestre.STYLE_DESK)
@@ -77,7 +77,7 @@ def main():
     prova("finestra Licenze e codice sorgente", licenze)
 
     def informazioni():
-        d = AboutDialog(win)
+        d = win._informazioni()   # finestra comune della libreria
         testi = " ".join(w.text() for w in d.findChildren(finestre.QLabel)) + " ".join(
             b.text() for b in d.findChildren(finestre.QPushButton))
         assert "AGPL-3.0" in testi and "Licenze e codice sorgente" in testi, testi

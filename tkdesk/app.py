@@ -16,7 +16,7 @@ from tkdesk import APP_TITLE, URL_SORGENTE, VERSION, centralino as ce, pro, upda
 from tkdesk.comandi import da_evento_tasto
 from tkdesk.kit import (
     ACCENT, ACCENT_2, ACCENT_L, ANTITRUFFA, GRAY_200, GRAY_300, GRAY_400, GRAY_500, GREEN, NAVY, NAVY_2, NAVY_3, RED,
-    STYLE, AboutDialog, Card, DownloadThread, TkDialog, TkProgress, UpdateDialog, Worker, ic, mini_btn, render_icon,
+    STYLE, Card, DownloadThread, TkDialog, TkProgress, UpdateDialog, Worker, ic, mini_btn, render_icon,
     righe_benvenuto, shadow, text_btn, tk_choice, tk_info, tk_warn,
 )
 from tkdesk.sessione import ATTESA_CONFERMA, Motore
@@ -1626,10 +1626,26 @@ class Principale(QMainWindow):
         threading.Thread(target=work, daemon=True).start()
 
     def act_about(self):
-        dlg = AboutDialog(self)
-        dlg.exec()
-        if dlg.check:
-            self.check_updates(True)
+        """Informazioni: finestra comune a tutti i software TK (libreria), colore di tk-desk."""
+        self._informazioni().exec()
+
+    def _informazioni(self):
+        from tkdesk.tk_licenza_qt import InformazioniDialog
+        return InformazioniDialog(
+            pro.licenza(), APP_TITLE, VERSION, "Assistenza remota: schermo, mouse, tastiera, file e chat, con la "
+            "conferma di chi sta al computer.", render_icon(136), "#059669",
+            dati=[("Impostazioni e rubrica", util.data_dir(), "Password fissa e rubrica sono cifrate su questo computer.")],
+            url_sorgente=URL_SORGENTE, cartella_licenze=util.cartella_licenze(),
+            su_aggiornamenti=lambda: self.check_updates(True),
+            su_icona_desktop=self._icona_desktop if util.IS_WIN else None, parent=self)
+
+    def _icona_desktop(self):
+        try:
+            path = util.create_desktop_shortcut()
+        except Exception as exc:
+            tk_warn(self, APP_TITLE, f"Non riesco a creare l'icona sul Desktop:\n{exc}")
+            return
+        tk_info(self, APP_TITLE, f"Icona creata sul Desktop:\n{path}", "ok")
 
     def show_update_button(self, version):
         self.update_btn.setVisible(bool(version))

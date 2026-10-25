@@ -8,8 +8,7 @@ from PySide6.QtGui import QBrush, QColor, QDesktopServices, QIcon, QImage, QLine
 from PySide6.QtWidgets import (QDialog, QFrame, QGraphicsDropShadowEffect, QHBoxLayout, QLabel, QLayout, QProgressBar,
                                QPushButton, QVBoxLayout)
 
-from tkdesk import APP_TITLE, AUTHOR, AUTHOR_URL, PRIVACY_URL, TERMS_URL, URL_SORGENTE, VERSION, pro, updater
-from tkdesk.util import IS_WIN, cartella_licenze, create_desktop_shortcut, data_dir
+from tkdesk import APP_TITLE, VERSION, updater
 
 NAVY = "#0f172a"
 NAVY_2 = "#1e293b"
@@ -524,69 +523,6 @@ def righe_benvenuto(nome):
         "nelle Impostazioni), i server STUN di Google per il collegamento diretto e il controllo degli "
         "aggiornamenti. Schermo, file e chat vanno diretti e cifrati da un computer all'altro.",
     ]
-
-
-class AboutDialog(TkDialog):
-    def __init__(self, win):
-        super().__init__(win, 460)
-        self.check = False
-        top = QHBoxLayout()
-        icon = QLabel()
-        icon.setPixmap(render_icon(72))
-        top.addWidget(icon)
-        top.addSpacing(10)
-        col = QVBoxLayout()
-        t = QLabel(APP_TITLE)
-        t.setStyleSheet("font-size:24px; font-weight:800; color:#fff;")
-        col.addWidget(t)
-        s = QLabel("Controllo remoto e assistenza:\nschermo, mouse, tastiera, file e chat.")
-        s.setObjectName("asub")
-        col.addWidget(s)
-        top.addLayout(col, 1)
-        self.body.addLayout(top)
-        for title, body in (("VERSIONE", f"{VERSION} · tutte le funzioni, gratis"),
-                            ("LICENZA", "Software libero · AGPL-3.0"),
-                            ("SVILUPPATORE", f"{AUTHOR} · {AUTHOR_URL.split('//')[1]}"),
-                            ("IMPOSTAZIONI E RUBRICA", html.escape(data_dir()))):
-            self.body.addWidget(_info_card(title, body))
-        self.body.addWidget(text_btn("refresh", "Controlla aggiornamenti", self._check, "#fff", "accent"))
-        self.body.addWidget(text_btn("doc", "Licenze e codice sorgente", self._licenze))
-        row = QHBoxLayout()
-        row.setSpacing(8)
-        caffe = pro.pulsante_caffe("ghost")  # ambra, uguale in tutti i software
-        if caffe is not None:
-            row.addWidget(caffe, 1)
-        if IS_WIN:
-            row.addWidget(text_btn("doc", "Icona sul Desktop", self._shortcut), 1)
-        row.addWidget(text_btn("", "Chiudi", self.accept), 1)
-        self.body.addLayout(row)
-        links = QHBoxLayout()
-        links.addStretch(1)
-        for label, url in (("Termini e condizioni", TERMS_URL), ("Privacy", PRIVACY_URL),
-                           ("Contatti", AUTHOR_URL + "/contatti/")):
-            b = QPushButton(label)
-            b.setObjectName("link")
-            b.setCursor(Qt.CursorShape.PointingHandCursor)
-            b.clicked.connect(lambda _=False, u=url: open_url(u))
-            links.addWidget(b)
-        links.addStretch(1)
-        self.body.addLayout(links)
-
-    def _shortcut(self):
-        try:
-            path = create_desktop_shortcut()
-        except Exception as exc:
-            tk_warn(self.parent(), APP_TITLE, f"Non riesco a creare l'icona sul Desktop:\n{exc}")
-            return
-        tk_info(self.parent(), APP_TITLE, f"Icona creata sul Desktop:\n{path}", "ok")
-
-    def _check(self):
-        self.check = True
-        self.accept()
-
-    def _licenze(self):
-        from tkdesk.tk_licenza_qt import LicenzeDialog
-        LicenzeDialog(APP_TITLE, VERSION, URL_SORGENTE, cartella_licenze(), self).exec()
 
 
 # ---------------------------------------------------------------- lavori in sottofondo
