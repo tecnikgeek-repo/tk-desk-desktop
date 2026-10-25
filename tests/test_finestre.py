@@ -128,6 +128,19 @@ def main():
         assert d.b_si.isEnabled()
         d.b_si.click()
         assert scelte == [True], scelte
+        gira(0.2)
+        assert not d.isVisible(), "dopo «Accetta» la finestra deve sparire (1.1.3 restava visibile)"
+        # anche se chi riceve la scelta dà errore, la finestra si chiude lo stesso
+        d = finestre.ConfermaAccesso("123456789", "")
+        d.scelta.connect(lambda si: (_ for _ in ()).throw(RuntimeError("prova")))
+        d.show()
+        gira(1.3)
+        try:
+            d.b_si.click()
+        except RuntimeError:
+            pass
+        gira(0.2)
+        assert not d.isVisible(), "con un errore dopo «Accetta» la finestra deve sparire lo stesso"
         d = finestre.ConfermaAccesso("123456789", "")
         scelte = []
         d.scelta.connect(scelte.append)

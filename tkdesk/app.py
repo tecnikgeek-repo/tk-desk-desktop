@@ -637,14 +637,24 @@ class ConfermaAccesso(TkDialog):
             return
         self.deciso = True
         self._timer.stop()
-        self.scelta.emit(bool(si))
-        self.close()
+        # prima sparisce (chi clicca vede subito che è stato preso), poi la scelta: se quello che parte con
+        # «Accetta» si blocca o dà errore, la finestra non resta comunque aperta (1.1.3: restava visibile)
+        self.hide()
+        try:
+            self.scelta.emit(bool(si))
+        finally:
+            self._via()
 
     def chiudi(self):
         """Richiesta scaduta o decisa altrove: si chiude senza scegliere."""
         self.deciso = True
         self._timer.stop()
-        self.close()
+        self._via()
+
+    def _via(self):
+        self.hide()
+        self.done(0)
+        self.deleteLater()
 
     def closeEvent(self, e):
         if not self.deciso:          # chiusa con Esc o Alt+F4 = rifiutata
