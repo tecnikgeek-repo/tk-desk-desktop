@@ -1874,7 +1874,8 @@ def main():
     app.licenza = pro.crea_licenza(VERSION)
     app.setApplicationName(APP_TITLE)
     app.setStyle("Fusion")
-    app.setStyleSheet(STYLE_DESK)
+    from tkdesk.tk_licenza_qt import stile_caselle_globale
+    app.setStyleSheet(STYLE_DESK + stile_caselle_globale())
     import PySide6
     from PySide6.QtCore import QLibraryInfo, QTranslator
     # traduzioni di Qt (menu dell'app sul Mac, finestre dei file, menu del testo): prima di creare le finestre
