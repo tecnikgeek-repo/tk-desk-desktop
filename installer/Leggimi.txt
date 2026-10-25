@@ -1,0 +1,63 @@
+tk-desk - controllo remoto e assistenza
+=======================================
+
+tk-desk e' software libero e gratuito, con tutte le funzioni, sotto licenza GNU AGPL-3.0.
+Codice sorgente: https://github.com/tecnikgeek-repo/tk-desk-desktop
+I testi delle licenze (tk-desk e componenti inclusi) sono nella cartella app\licenze.
+
+ATTENZIONE ALLE TRUFFE
+Non dare mai ID e password a chi ti chiama o ti scrive dicendo di essere un tecnico, la banca o
+la polizia. Usa tk-desk solo con persone che conosci.
+
+COME SI USA
+1. Estrai questa cartella dove vuoi (Documenti, Desktop, anche una pennetta USB).
+2. Doppio clic su "Avvia tk-desk.cmd" la prima volta. Al primo avvio compare nella cartella
+   l'icona "tk-desk": da li' in poi usa quella. Se sposti la cartella, riavvia dal .cmd.
+
+PER FARTI AIUTARE
+Detta il tuo ID (9 cifre) e la password monouso (6 cifre) a chi ti aiuta. Quando si collega
+compare la finestra "Accetta / Rifiuta": se non rispondi entro 30 secondi la richiesta viene
+rifiutata. La password cambia dopo ogni sessione, da sola dopo 10 minuti senza collegamenti e
+dopo ogni tentativo sbagliato oltre il terzo (con blocchi di 1, 5 e 15 minuti). In alto compare
+una barra con "Termina": la premi e il collegamento si chiude subito. Se chi ti aiuta registra
+la sessione, sulla barra vedi "REC".
+I file che ti mandano arrivano solo se li accetti (massimo 2 GB) e Windows li tratta come
+scaricati da internet. Gli appunti (testo copiato) passano solo se li accendi nelle Impostazioni.
+
+PER AIUTARE UN ALTRO COMPUTER
+Scrivi ID e password che ti detta l'altra persona e premi "Collegati": dall'altra parte devono
+premere "Accetta". Vedi il suo schermo e usi mouse e tastiera, puoi mandargli file, scrivergli
+in chat o chiamarlo a voce con "Chiamata". Puoi tenere aperte piu' sessioni e registrarle.
+
+ACCESSO NON PRESIDIATO
+Con una password fissa scelta da te si entra senza che nessuno prema "Accetta": dalla solo a chi
+ti fidi. Mentre qualcuno controlla il computer, password fissa, accesso non presidiato e avvio con
+il computer non si possono attivare.
+
+COSA VA IN RETE E COSA RESTA SUL COMPUTER
+- Centralino (pietrodefilippis.it): tk-desk si registra con un codice casuale e il nome del
+  computer (lo cambi nelle Impostazioni) e passa le richieste di collegamento. Non vede lo
+  schermo, i file ne' la chat e la password non gli arriva in chiaro.
+- Server STUN di Google (stun.l.google.com): dicono a ogni computer il suo indirizzo pubblico,
+  serve per il collegamento diretto.
+- Schermo, file, chat e voce vanno diretti da un computer all'altro, cifrati.
+- Aggiornamenti: tk-desk controlla le versioni nuove su pietrodefilippis.it e installa solo
+  aggiornamenti firmati.
+- Statistiche anonime (nome, versione, sistema, codice casuale): solo se dici di si'.
+- Restano sul computer, nella cartella "Dati": impostazioni, rubrica, chiave della password fissa
+  (cifrata con Windows, mai la password), registro degli errori. I file ricevuti vanno sulla
+  Scrivania, le registrazioni in Video\tk-desk.
+
+DISINSTALLAZIONE
+Con l'installazione: Impostazioni di Windows -> App -> tk-desk -> Disinstalla. Toglie anche
+l'avvio con il computer e chiede se cancellare i dati. Versione portatile: cancella la cartella
+(e, se l'avevi acceso, togli "tk-desk" dalle app di avvio di Windows).
+
+SE WINDOWS BLOCCA L'AVVIO
+Tasto destro sul file ZIP scaricato -> Proprieta' -> spunta "Sblocca" -> OK, poi estrai di nuovo.
+
+Il nome tk-desk e il logo non sono coperti dalla licenza (AGPL sez. 7): una versione modificata
+deve avere un nome diverso.
+
+Creato da TecnikGeek - https://pietrodefilippis.it
+Termini: https://pietrodefilippis.it/termini-e-condizioni/

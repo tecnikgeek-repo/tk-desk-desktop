@@ -1,0 +1,53 @@
+tk-desk per Mac — installazione
+================================
+
+tk-desk è software libero e gratuito, con tutte le funzioni, sotto licenza GNU AGPL-3.0.
+Codice sorgente: https://github.com/tecnikgeek-repo/tk-desk-desktop
+I testi delle licenze sono dentro l'app (tk-desk → Informazioni → «Licenze e codice sorgente»).
+
+ATTENZIONE ALLE TRUFFE
+Non dare mai ID e password a chi ti chiama o ti scrive dicendo di essere un tecnico, la banca o
+la polizia. Usa tk-desk solo con persone che conosci.
+
+1. Trascina «tk-desk» sulla cartella «Applicazioni».
+2. Apri tk-desk da Applicazioni (o da Launchpad).
+
+PER FARTI AIUTARE (essere controllato)
+Il Mac chiede due permessi, una volta sola: Impostazioni di Sistema → Privacy e sicurezza →
+  • «Registrazione schermo»: accendi tk-desk (senza, chi ti aiuta vede solo lo sfondo);
+  • «Accessibilità»: accendi tk-desk (senza, chi ti aiuta non può usare mouse e tastiera).
+Poi chiudi e riapri tk-desk. Per controllare un altro computer i permessi non servono.
+A ogni collegamento con la password monouso decidi tu con «Accetta» o «Rifiuta» (dopo 30
+secondi senza risposta è rifiutato). La password cambia dopo ogni sessione e da sola dopo 10
+minuti. I file ricevuti arrivano solo se li accetti e il Mac li tratta come scaricati da internet.
+
+PRIMO AVVIO
+L'app non è firmata con un certificato Apple, quindi al primo avvio macOS può bloccarla
+("impossibile verificare lo sviluppatore" oppure "l'app è danneggiata").
+
+  • Apri Impostazioni di Sistema → Privacy e sicurezza, scorri in basso e premi
+    «Apri comunque» accanto a tk-desk, poi conferma.
+
+  • In alternativa, da Terminale:
+        xattr -dr com.apple.quarantine "/Applications/tk-desk.app"
+
+Serve farlo una sola volta.
+
+COSA VA IN RETE E COSA RESTA SUL MAC
+- Centralino (pietrodefilippis.it): registrazione con un codice casuale e il nome del computer
+  (lo cambi nelle Impostazioni); non vede lo schermo, i file né la chat, la password non gli
+  arriva in chiaro.
+- Server STUN di Google: servono per il collegamento diretto tra i due computer.
+- Aggiornamenti da pietrodefilippis.it (solo aggiornamenti firmati).
+- Statistiche anonime solo se dici di sì.
+- Sul Mac restano impostazioni e rubrica (Libreria/Application Support/tk-desk); la chiave della
+  password fissa e quelle della rubrica stanno nel Portachiavi.
+
+DISINSTALLAZIONE
+tk-desk → Impostazioni → «Cancella tutto e togli l'avvio automatico», poi trascina tk-desk dalle
+Applicazioni al Cestino.
+
+Il nome tk-desk e il logo non sono coperti dalla licenza (AGPL sez. 7): una versione modificata
+deve avere un nome diverso.
+
+Creato da TecnikGeek — https://pietrodefilippis.it
