@@ -399,25 +399,26 @@ def main():
         try:
             host._sbagliate, host._bloccato_fino = 0, 0.0
             prima = host.password
+            # margini larghi: sul runner Mac Intel di GitHub ogni chiamata è molto più lenta
             for i in range(3):
                 k = ctrl.connetti(id_h, "zzzzzz")
-                x = rc.aspetta("sessione_chiusa", test=lambda a, k=k: a[0] == k)
+                x = rc.aspetta("sessione_chiusa", test=lambda a, k=k: a[0] == k, timeout=60)
                 assert "Password sbagliata" in x[0][1], (i, x)
             assert host.password == prima, "fino alla terza la password resta"
             k = ctrl.connetti(id_h, host.password)       # bloccato: neanche quella giusta passa
-            x = rc.aspetta("sessione_chiusa", test=lambda a: a[0] == k)
+            x = rc.aspetta("sessione_chiusa", test=lambda a: a[0] == k, timeout=60)
             assert "Troppe password sbagliate" in x[0][1], x
             assert rh.aspetta("tentativi", test=lambda a: a[0] == 3 and a[1] == 2)
             time.sleep(2.2)
             k = ctrl.connetti(id_h, "zzzzzz")            # la quarta: la password cambia
-            x = rc.aspetta("sessione_chiusa", test=lambda a: a[0] == k)
+            x = rc.aspetta("sessione_chiusa", test=lambda a: a[0] == k, timeout=60)
             assert "Password sbagliata" in x[0][1], x
             assert aspetta_che(lambda: host.password != prima), "oltre la terza la password deve cambiare"
             seconda = host.password
             for _ in range(2):                           # quinta e sesta: cambia ancora, poi blocco di 5 «minuti»
                 k = ctrl.connetti(id_h, "zzzzzz")
-                rc.aspetta("sessione_chiusa", test=lambda a, k=k: a[0] == k)
-            assert aspetta_che(lambda: host.password != seconda)
+                rc.aspetta("sessione_chiusa", test=lambda a, k=k: a[0] == k, timeout=60)
+            assert aspetta_che(lambda: host.password != seconda, 30)
             rh.aspetta("tentativi", test=lambda a: a[0] == 6 and a[1] == 3)
         finally:
             sessione.BLOCCHI = vecchi
@@ -429,7 +430,8 @@ def main():
         sessione.SCADENZA_PASSWORD, sessione.CONTROLLO_SCADENZA = 2, 0.5   # nel programma 10 minuti
         try:
             prima = host.password
-            assert aspetta_che(lambda: host.password != prima, 12), "la password doveva cambiare da sola"
+            host._sbagliate, host._bloccato_fino = 0, 0.0   # nessun blocco rimasto dalla prova di prima
+            assert aspetta_che(lambda: host.password != prima, 30), "la password doveva cambiare da sola"
             assert host.password.isdigit() and len(host.password) == 6
             k = ctrl.connetti(id_h, prima)
             x = rc.aspetta("sessione_chiusa", test=lambda a: a[0] == k)
