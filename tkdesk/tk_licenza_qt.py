@@ -87,6 +87,78 @@ def _scuro(colore, fattore=135):
     return QColor(colore).darker(fattore).name()
 
 
+def centra(dlg):
+    """Mette la finestra al centro: sopra la finestra principale se è visibile e sullo schermo, altrimenti al
+    centro dello schermo (all'avvio la principale può non avere ancora una posizione vera)."""
+    try:
+        dlg.adjustSize()
+        padre = dlg.parentWidget().window() if dlg.parentWidget() is not None else None
+        schermo = None
+        if padre is not None and padre.isVisible():
+            schermo = padre.screen()
+        schermo = schermo or QGuiApplication.screenAt(dlg.cursor().pos()) or QGuiApplication.primaryScreen()
+        area = schermo.availableGeometry()
+        rif = padre.frameGeometry() if padre is not None and padre.isVisible() and area.intersects(padre.frameGeometry()) else area
+        g = dlg.frameGeometry()
+        g.moveCenter(rif.center())
+        # mai fuori dallo schermo
+        x = min(max(g.left(), area.left()), area.right() - g.width())
+        y = min(max(g.top(), area.top()), area.bottom() - g.height())
+        dlg.move(max(x, area.left()), max(y, area.top()))
+    except Exception:
+        pass
+
+
+_SPUNTA = {}
+
+
+def _spunta_png():
+    """Segno di spunta bianco (PNG in una cartella temporanea) per le caselle su fondo scuro: lo stile Qt
+    vuole un file per l'immagine dell'indicatore."""
+    if "p" in _SPUNTA and __import__("os").path.exists(_SPUNTA["p"]):
+        return _SPUNTA["p"]
+    import os
+    import tempfile
+    from PySide6.QtCore import QPointF
+    from PySide6.QtGui import QPainter, QPen, QPixmap
+    pm = QPixmap(40, 40)
+    pm.fill(Qt.GlobalColor.transparent)
+    p = QPainter(pm)
+    p.setRenderHint(QPainter.RenderHint.Antialiasing)
+    pen = QPen(QColor("#ffffff"), 6)
+    pen.setCapStyle(Qt.PenCapStyle.RoundCap)
+    pen.setJoinStyle(Qt.PenJoinStyle.RoundJoin)
+    p.setPen(pen)
+    p.drawPolyline([QPointF(9, 21), QPointF(17, 29), QPointF(31, 12)])
+    p.end()
+    path = os.path.join(tempfile.gettempdir(), "tk-spunta-bianca.png")
+    pm.save(path)
+    _SPUNTA["p"] = path
+    return path
+
+
+def stile_casella(selettore="QCheckBox"):
+    """Casella ben visibile su fondo scuro: quadrato chiaro, blu con la spunta bianca quando è attiva."""
+    img = _spunta_png().replace("\\", "/")
+    return (f"{selettore} {{ color:#ffffff; font-size:13px; spacing:10px; }}"
+            f"{selettore}::indicator {{ width:20px; height:20px; border-radius:6px; border:2px solid {CHIARO};"
+            f" background:{NAVY}; }}"
+            f"{selettore}::indicator:hover {{ border-color:#ffffff; }}"
+            f"{selettore}::indicator:checked {{ background:{PRO_BLU}; border-color:{PRO_BLU}; image:url({img}); }}"
+            f"{selettore}::indicator:checked:hover {{ background:{PRO_BLU_SCURO}; border-color:{PRO_BLU_SCURO}; }}")
+
+
+class _Centrata:
+    """Da mettere prima di QDialog: la finestra si centra appena compare."""
+
+    def showEvent(self, ev):
+        super().showEvent(ev)
+        if not getattr(self, "_tk_centrata", False):
+            self._tk_centrata = True
+            centra(self)
+            QTimer.singleShot(0, lambda: centra(self))   # dopo che il gestore delle finestre l'ha piazzata
+
+
 class ProDialog(QDialog):
     def __init__(self, lic, nome_app, funzioni_pro, accento="#e11d48", parent=None,
                  funzioni_free=None, font_icone=None, logo=None):
@@ -627,7 +699,7 @@ CAFFE_AVVII = 10                # …e solo dopo almeno 10 avvii dall'ultima vol
 CAFFE_DOPO_DONO = 90 * 86400    # chi ha premuto «Offrimi un caffè» non lo rivede per 3 mesi
 
 
-class CaffeDialog(QDialog):
+class CaffeDialog(_Centrata, QDialog):
     """Invito al caffè: piccolo, una riga, due pulsanti e «Non mostrarlo più»."""
 
     def __init__(self, lic, nome_app, parent=None, logo=None):
@@ -772,6 +844,8 @@ def casella_statistiche(lic, testo="Invia statistiche anonime di utilizzo"):
     """Casella per le Impostazioni: accende o spegne il segnale giornaliero (consenso dell'utente)."""
     from PySide6.QtWidgets import QCheckBox
     c = QCheckBox(testo)
+    c.setObjectName("tkCasella")
+    c.setStyleSheet(stile_casella("QCheckBox#tkCasella"))
     c.setToolTip(TESTO_STATISTICHE)
     c.setChecked(bool(lic is not None and lic.consenso_statistiche()))
     if lic is not None:
@@ -779,7 +853,7 @@ def casella_statistiche(lic, testo="Invia statistiche anonime di utilizzo"):
     return c
 
 
-class BenvenutoDialog(QDialog):
+class BenvenutoDialog(_Centrata, QDialog):
     """Prima apertura: software libero, nessuna garanzia, privacy e consenso alle statistiche (spento di default)."""
 
     def __init__(self, lic, nome_app, url_sorgente, parent=None, logo=None, righe_extra=()):
@@ -794,7 +868,7 @@ class BenvenutoDialog(QDialog):
             "#tkTit { font-size: 19px; font-weight: 800; }"
             f"#tkTesto {{ color: {CHIARO}; font-size: 13px; }}"
             f"#tkBox {{ background: {NAVY_2}; border: 1px solid {NAVY_3}; border-radius: 12px; }}"
-            "QCheckBox { color: #ffffff; font-size: 13px; spacing: 8px; }"
+            + stile_casella() +
             f"QPushButton#tkPrimo {{ background: {PRO_BLU}; color: white; border: 0; border-radius: 10px;"
             " padding: 11px 22px; font-size: 14px; font-weight: 800; }"
             f"QPushButton#tkPrimo:hover {{ background: {PRO_BLU_SCURO}; }}")
@@ -892,7 +966,7 @@ def benvenuto(lic, nome_app, url_sorgente, parent=None, logo=None, righe_extra=(
     BenvenutoDialog(lic, nome_app, url_sorgente, parent, logo, righe_extra).exec()
 
 
-class LicenzeDialog(QDialog):
+class LicenzeDialog(_Centrata, QDialog):
     """Informazioni → «Licenze e codice sorgente»: AGPL del programma + licenze dei componenti inclusi.
     `cartella_licenze` = cartella `licenze/` del pacchetto (un file .txt per componente)."""
 
