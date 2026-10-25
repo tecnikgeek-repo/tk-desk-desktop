@@ -393,7 +393,15 @@ def main():
             host._sbagliate = 0
     prova("compatibilità: con una tk-desk di prima si riprova da soli con la chiave v1", ospite_vecchio)
 
+    def a_riposo():
+        # su un runner lento la sessione o la richiesta di conferma della prova di prima possono essere ancora
+        # aperte: con una richiesta in attesa le nuove chiamate dello stesso computer vengono ignorate (è voluto)
+        # e la password non cambia per inattività. Si aspetta che il computer controllato sia libero.
+        assert aspetta_che(lambda: not host._entrate and not host._richieste, 90), \
+            f"il computer controllato non si libera: entrate={list(host._entrate)} richieste={list(host._richieste)}"
+
     def tentativi():
+        a_riposo()
         vecchi = sessione.BLOCCHI
         sessione.BLOCCHI = (2, 3, 4)          # nel programma 1, 5 e 15 minuti
         try:
@@ -426,6 +434,7 @@ def main():
     prova("password sbagliate: blocco crescente e password nuova dopo ogni errore oltre il terzo", tentativi)
 
     def inattivita():
+        a_riposo()
         vecchi = sessione.SCADENZA_PASSWORD, sessione.CONTROLLO_SCADENZA
         sessione.SCADENZA_PASSWORD, sessione.CONTROLLO_SCADENZA = 2, 0.5   # nel programma 10 minuti
         try:

@@ -1296,7 +1296,23 @@ class Principale(QMainWindow):
         s.file_rifiutato.connect(self._file_rifiutato)
 
     # ---- conferma locale dei collegamenti in entrata (password monouso)
+    @staticmethod
+    def _chiudi_modali():
+        """Una finestra modale aperta (invito al caffè, Impostazioni, Informazioni, Rubrica…) blocca i clic su
+        tutte le altre, anche sulla conferma «Accetta» che è senza genitore e magari su un altro schermo:
+        si annullano prima di mostrarla (Impostazioni = Annulla, nessun salvataggio)."""
+        for _ in range(10):
+            m = QApplication.activeModalWidget()
+            if m is None:
+                break
+            try:
+                m.reject() if hasattr(m, "reject") else m.close()
+            except Exception:
+                m.close()
+            QApplication.processEvents()
+
     def _richiesta_accesso(self, rid, id_, nome):
+        self._chiudi_modali()
         dlg = ConfermaAccesso(id_, nome)
         dlg.scelta.connect(lambda si, r=rid: (self.motore.rispondi_accesso(r, si), self._conferme.pop(r, None)))
         self._conferme[rid] = dlg

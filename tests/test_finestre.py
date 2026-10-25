@@ -12,6 +12,7 @@ sys.path.insert(0, ROOT)
 os.environ["QT_QPA_PLATFORM"] = "offscreen"
 os.environ["TKDESK_DATA"] = tempfile.mkdtemp(prefix="tkdesk-finestre-")
 
+from PySide6.QtCore import QTimer  # noqa: E402
 from PySide6.QtWidgets import QApplication  # noqa: E402
 
 from tkdesk import URL_SORGENTE, VERSION, pro, util  # noqa: E402
@@ -141,6 +142,27 @@ def main():
         d.close()                                    # chiusa con la X = rifiutata
         assert scelte == [False], scelte
     prova("finestra «Accetta / Rifiuta»: accetta, scade dopo il tempo, chiusa = rifiuto", conferma)
+
+    def conferma_sopra_modale():
+        # bug 1.1.1 (Pietro: «non mi fa cliccare su Accetta»): con una finestra modale aperta (caffè, Impostazioni…)
+        # la conferma senza genitore non riceveva i clic. Ora le modali si chiudono prima di mostrarla.
+        visto = {}
+
+        def arriva_richiesta():
+            visto["modale_prima"] = QApplication.activeModalWidget()
+            win._richiesta_accesso("r-prova", "123456789", "Tecnico")
+            visto["modale_dopo"] = QApplication.activeModalWidget()
+
+        imp = finestre.Impostazioni(win)
+        QTimer.singleShot(300, arriva_richiesta)
+        imp.exec()                                   # modale: si chiude da sola quando arriva la richiesta
+        assert visto.get("modale_prima") is imp, visto
+        assert visto.get("modale_dopo") is None, f"resta una finestra modale che blocca «Accetta»: {visto}"
+        d = win._conferme.pop("r-prova", None)
+        assert d is not None and d.isVisible(), "la conferma deve essere visibile"
+        d.close()
+    prova("con una finestra modale aperta la conferma «Accetta» riceve i clic (le modali si chiudono)",
+          conferma_sopra_modale)
 
     print("TUTTO OK" if not FALLITI else f"FALLITE: {FALLITI}", flush=True)
     codice = 1 if FALLITI else 0
