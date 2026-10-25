@@ -491,7 +491,9 @@ class Sessione(QMainWindow):
 
 # ───────────────────────────────────────────── barra di chi è controllato
 class Barra(QWidget):
-    """In alto al centro dello schermo finché qualcuno controlla questo computer: chi è, chat, Termina."""
+    """In alto al centro dello schermo finché qualcuno controlla questo computer: chi è, chat, Termina.
+    Si sposta trascinandola (dalla maniglia o da un punto senza pulsanti) e si riduce a una pillola con «—»;
+    «Termina» resta sempre visibile. Finché non la sposti resta centrata sullo schermo di tk-desk."""
     termina = Signal()
     chat = Signal()
     file = Signal(list)
@@ -506,12 +508,36 @@ class Barra(QWidget):
         card = QFrame(objectName="bannercard")
         shadow(card, 30, 6, 90)
         out.addWidget(card)
-        h = QHBoxLayout(card)
-        h.setContentsMargins(14, 8, 10, 8)
-        h.setSpacing(10)
+        riga = QHBoxLayout(card)
+        riga.setContentsMargins(8, 8, 10, 8)
+        riga.setSpacing(10)
+        maniglia = QLabel("⠿")
+        maniglia.setToolTip("Trascina per spostare la barra")
+        maniglia.setStyleSheet("color:#94a3b8; font-size:18px; padding:0 2px;")
+        maniglia.setCursor(Qt.CursorShape.SizeAllCursor)
+        riga.addWidget(maniglia)
         punto = QLabel()
         punto.setPixmap(ic("dot", "#f87171", 14).pixmap(14, 14))
-        h.addWidget(punto)
+        riga.addWidget(punto)
+        # barra intera
+        self.pieno = QWidget()
+        h = QHBoxLayout(self.pieno)
+        h.setContentsMargins(0, 0, 0, 0)
+        h.setSpacing(10)
+        riga.addWidget(self.pieno)
+        # barra ridotta: solo «Controllato», Apri e Termina
+        self.ridotto = QWidget()
+        hr = QHBoxLayout(self.ridotto)
+        hr.setContentsMargins(0, 0, 0, 0)
+        hr.setSpacing(8)
+        corto = QLabel("Controllato", objectName="bannertxt")
+        hr.addWidget(corto)
+        hr.addWidget(text_btn("full", "Apri", lambda: self._riduci(False), "#fff", "ghost", "Mostra la barra intera"))
+        hr.addWidget(text_btn("power", "Termina", self.termina.emit, "#fff", "accent", "Chiudi il collegamento adesso"))
+        self.ridotto.hide()
+        riga.addWidget(self.ridotto)
+        self._trascino = None
+        self._spostata = False
         self.testo = QLabel("", objectName="bannertxt")
         self.testo.setTextFormat(Qt.TextFormat.PlainText)   # c'è il nome scelto dall'altro computer
         self.testo.setToolTip("Trascina qui dei file per mandarli a chi ti assiste")
@@ -526,6 +552,44 @@ class Barra(QWidget):
         h.addWidget(text_btn("file", "Invia file", self._scegli, "#fff", "ghost", "Manda file a chi ti assiste (o trascinali qui)"))
         self.setAcceptDrops(True)
         h.addWidget(text_btn("power", "Termina", self.termina.emit, "#fff", "accent", "Chiudi il collegamento adesso"))
+        h.addWidget(text_btn("", "—", lambda: self._riduci(True), "#fff", "ghost", "Riduci la barra"))
+
+    # ── spostare e ridurre
+    def mousePressEvent(self, e):
+        if e.button() == Qt.MouseButton.LeftButton:
+            self._trascino = e.globalPosition().toPoint() - self.frameGeometry().topLeft()
+
+    def mouseMoveEvent(self, e):
+        if self._trascino is not None and e.buttons() & Qt.MouseButton.LeftButton:
+            self.move(e.globalPosition().toPoint() - self._trascino)
+            self._spostata = True
+
+    def mouseReleaseEvent(self, e):
+        self._trascino = None
+
+    def _riduci(self, si):
+        centro = self.frameGeometry().center().x()
+        self.pieno.setVisible(not si)
+        self.ridotto.setVisible(si)
+        self._adatta(centro)
+
+    def _schermo(self):
+        """Lo schermo dove c'è la finestra di tk-desk (con più schermi), altrimenti il principale."""
+        for w in QApplication.topLevelWidgets():
+            if isinstance(w, QMainWindow) and w.isVisible() and w.screen() is not None:
+                return w.screen()
+        return QApplication.primaryScreen()
+
+    def _adatta(self, centro=None):
+        """Dopo un cambio di larghezza: centrata in alto finché non l'hai spostata, altrimenti resta dove l'hai
+        messa (con lo stesso centro, se si riduce o si allarga)."""
+        self.layout().activate()
+        self.adjustSize()
+        if not self._spostata:
+            geo = self._schermo().availableGeometry()
+            self.move(geo.center().x() - self.width() // 2, geo.top())
+        elif centro is not None:
+            self.move(centro - self.width() // 2, self.y())
 
     def _scegli(self):
         file, _ = QFileDialog.getOpenFileNames(None, "File da mandare a chi ti assiste")
@@ -548,7 +612,7 @@ class Barra(QWidget):
         self.b_voce.setObjectName("rec" if stato == "attiva" else "voce" if stato == "chiamo" else "ghost")
         self.b_voce.style().unpolish(self.b_voce)
         self.b_voce.style().polish(self.b_voce)
-        self.adjustSize()
+        self._adatta(self.frameGeometry().center().x())
 
     def showEvent(self, e):
         super().showEvent(e)
@@ -556,15 +620,19 @@ class Barra(QWidget):
 
     def rec(self, acceso):
         self.p_rec.setVisible(bool(acceso))
-        self.adjustSize()
+        self._adatta(self.frameGeometry().center().x())
 
     def mostra(self, testo):
+        """A ogni nuovo controllo la barra torna intera e centrata."""
         self.testo.setText(testo)
-        self.adjustSize()
-        geo = QApplication.primaryScreen().availableGeometry()
-        self.move(geo.center().x() - self.width() // 2, geo.top())
+        self._spostata = False
+        self.pieno.show()
+        self.ridotto.hide()
         self.show()
+        self._adatta()
         self.raise_()
+        # la larghezza vera si sa solo dopo il primo disegno: si ricentra un attimo dopo
+        QTimer.singleShot(50, lambda: self.isVisible() and self._adatta())
 
 
 class ChatControllato(TkDialog):
