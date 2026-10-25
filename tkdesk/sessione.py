@@ -214,6 +214,7 @@ class Motore:
         self._migra_segreti()
         self.su_principale = sys.platform == "darwin" and esecutore is None
         self.loop = asyncio.new_event_loop()
+        self._ice, self._ice_quando = [], 0.0
         self._thread = threading.Thread(target=self._gira, name="tk-desk-motore", daemon=True)
         _alza_bitrate()
 
@@ -243,6 +244,55 @@ class Motore:
 
     async def _in_thread(self, fn, *a):
         return await self.loop.run_in_executor(None, fn, *a)
+
+    async def _ponte(self):
+        """Ponte TURN (Cloudflare) per le reti che bloccano il collegamento diretto (dati mobili, hotspot, aziende).
+        Il permesso lo dà il centralino (/desk/ice) e vale 2 ore: si tiene per un'ora. Senza permesso (ponte spento,
+        esaurito nel mese, niente rete) si va solo in diretto, come prima."""
+        from aiortc import RTCIceServer
+        if time.time() - self._ice_quando < 3600:
+            return list(self._ice)
+        try:
+            r = await self._in_thread(lambda: self.ce._post("ice", {"id": self.id, "segreto": self.ce.segreto}))
+            ice = []
+            for s in r.get("ice") or []:
+                # aiortc usa un solo ponte TURN: il primo indirizzo (UDP 3478), poi gli altri se il primo non va
+                urls = [u for u in s.get("urls", []) if u.startswith(("turn:", "turns:"))]
+                if urls:
+                    ice.append(RTCIceServer(urls[0], username=s["username"], credential=s["credential"]))
+            self._ice, self._ice_quando = ice, time.time()
+            _diagnosi(f"ponte: {r.get('ponte')}")
+        except Exception as exc:
+            _diagnosi(f"ponte non disponibile: {exc!r}")
+            self._ice = []
+        return list(self._ice)
+
+    @staticmethod
+    def _passa_dal_ponte(pc):
+        """Il collegamento scelto da ICE passa dal ponte (candidato «relay» da una delle due parti)?"""
+        try:
+            conn = pc.sctp.transport.transport._connection
+            for coppia in conn._nominated.values():
+                if "relay" in (coppia.local_candidate.type, coppia.remote_candidate.type):
+                    return True
+        except Exception:
+            pass
+        return False
+
+    async def _segnala_uso(self, sess):
+        """A fine sessione chi controlla dice al centralino quanti byte sono passati dal ponte (limite mensile)."""
+        try:
+            if not self._passa_dal_ponte(sess.pc):
+                return
+            byte = 0
+            for ricevitore in sess.pc.getReceivers():
+                for st in (await ricevitore.getStats()).values():
+                    byte += int(getattr(st, "bytesReceived", 0) or 0)
+            byte = int(byte * 1.1)   # più quello che va nell'altro verso (comandi, file, voce): piccolo
+            _diagnosi(f"sessione {sess.chiave} passata dal ponte: {byte / 1e6:.1f} MB")
+            await self._in_thread(lambda: self.ce._post("uso", {"id": self.id, "segreto": self.ce.segreto, "byte": byte}))
+        except Exception as exc:
+            _diagnosi(f"uso del ponte non segnalato: {exc!r}")
 
     async def _principale(self):
         attesa = 1
@@ -481,7 +531,7 @@ class Motore:
         if da in self._entrate:
             await self._chiudi(self._entrate[da], "nuovo collegamento", avvisa=False)
 
-        pc = RTCPeerConnection(RTCConfiguration([RTCIceServer(u) for u in STUN]))
+        pc = RTCPeerConnection(RTCConfiguration([RTCIceServer(u) for u in STUN] + await self._ponte()))
         sess = _Sessione(da, da, pc)
         sess.info = {"nome": d.get("nome", ""), "piattaforma": d.get("piattaforma", ""), "fissa": con_fissa}
         sess.sorgente = (self._sorgente_factory or _sorgente_vera)()
@@ -618,7 +668,7 @@ class Motore:
             self.s.sessione_chiusa.emit(chiave_s, "Questo è l'ID di questo computer.")
             return
         self.s.stato_chiamata.emit(chiave_s, "Preparo il collegamento…")
-        pc = RTCPeerConnection(RTCConfiguration([RTCIceServer(u) for u in STUN]))
+        pc = RTCPeerConnection(RTCConfiguration([RTCIceServer(u) for u in STUN] + await self._ponte()))
         sess = _Sessione(chiave_s, id_remoto, pc)
         self._uscite[chiave_s] = sess
         pc.addTransceiver("video", direction="recvonly")
@@ -802,6 +852,8 @@ class Motore:
             await self._in_thread(self.audio.ferma)
         for fid in list(sess.file_in):
             self._scarta_file(sess, fid, avvisa=False)   # i file non ancora accettati non arrivano
+        if self._uscite.get(sess.chiave) is sess:
+            await self._segnala_uso(sess)
         try:
             await sess.pc.close()
         except Exception:
