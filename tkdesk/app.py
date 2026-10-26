@@ -1425,8 +1425,11 @@ class Principale(QMainWindow):
     def _file_in_arrivo(self, chiave, fid, nome, totale):
         da_sessione = chiave in self.sessioni
         chi = self.sessioni[chiave].titolo.text() if da_sessione else "Chi ti assiste"
+        from tkdesk.sessione import e_programma
         testo = (f"{chi} vuole mandarti «{nome}» ({human_size(int(totale or 0))}).\n\n"
-                 "Accettalo solo se lo aspettavi. Non aprire programmi o documenti ricevuti da chi non conosci: "
+                 + ("ATTENZIONE: è un PROGRAMMA. Se lo apri può fare qualsiasi cosa sul computer.\n\n"
+                    if e_programma(nome) else "")
+                 + "Accettalo solo se lo aspettavi. Non aprire programmi o documenti ricevuti da chi non conosci: "
                  "possono rubarti dati e password.")
         scelta = tk_choice(self.sessioni.get(chiave), "File in arrivo", testo,
                            [("Rifiuta", "ghost"), ("Accetta", "accent")], "ask")

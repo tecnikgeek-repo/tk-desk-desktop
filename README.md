@@ -73,6 +73,8 @@ Per i tuoi computer: password fissa, rubrica e più sessioni insieme. Tutto grat
 ## 🔒 I tuoi dati
 
 Il collegamento è **cifrato e diretto** tra i due computer (WebRTC): lo schermo non passa da nessun server. Il centralino su pietrodefilippis.it serve solo a far trovare i due computer.
+La password non gli arriva mai: la verificano i due computer tra loro (SPAKE2), e dai messaggi che passano dal
+centralino non si ricava, nemmeno provandole tutte.
 
 | Resta sul tuo computer | Va in rete (e perché) |
 |---|---|

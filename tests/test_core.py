@@ -124,27 +124,90 @@ def main():
 
     stato = {}
 
-    def firma():
-        for ricava in (ce.chiave, ce.chiave2):
-            k = ricava("ab3xyz", "123456789")
-            p = ce.firma(k, "chiamata", "1", "2", "n", "sdp")
-            assert ce.firma_valida(k, "chiamata", "1", "2", "n", "sdp", p)
-            assert not ce.firma_valida(ricava("ab3xyw", "123456789"), "chiamata", "1", "2", "n", "sdp", p)
-            assert not ce.firma_valida(k, "chiamata", "1", "2", "n", "sdp-cambiato", p)
-            assert ricava("AB3XYZ", "123456789") == k   # la monouso non distingue maiuscole
-        assert ce.chiave("123456", "1") != ce.chiave2("123456", "1")
+    def spake():
+        from tkdesk import pake
+        assert pake._ricava_punto(b"tk-desk SPAKE2 M").hex() == pake.M_HEX
+        assert pake._ricava_punto(b"tk-desk SPAKE2 N").hex() == pake.N_HEX
+        for p in (pake.M, pake.N):
+            assert pake.codifica(pake._per(pake._Q, p)) == pake._IDENTITA, "M e N nel sottogruppo giusto"
+        k = ce.chiave2("ab3xyz", "123456789")
+        assert ce.chiave2("AB3 XYZ", "123456789") == k   # la monouso non distingue maiuscole e spazi
+        a, b = pake.Spake2("A", "1", "2", k), pake.Spake2("B", "1", "2", k)
+        b.finisci(a.messaggio())
+        a.finisci(b.messaggio())
+        assert a.conferma_valida(b.conferma()) and b.conferma_valida(a.conferma())
+        assert b.sigillo_valido("offerta", "sdp", a.sigilla("offerta", "sdp"))
+        assert not b.sigillo_valido("offerta", "sdp-cambiato", a.sigilla("offerta", "sdp"))
+        assert not b.sigillo_valido("risposta", "sdp", a.sigilla("offerta", "sdp"))
+        for altra_b in (pake.Spake2("B", "1", "2", ce.chiave2("ab3xyw", "123456789")),   # password sbagliata
+                        pake.Spake2("B", "9", "2", k)):                                  # ID cambiato per strada
+            a = pake.Spake2("A", "1", "2", k)
+            altra_b.finisci(a.messaggio())
+            a.finisci(altra_b.messaggio())
+            assert not a.conferma_valida(altra_b.conferma()) and not altra_b.conferma_valida(a.conferma())
+        a = pake.Spake2("A", "1", "2", k)
+        for storto in ("zz", "ff" * 32, "00" * 32, a.messaggio()):
+            try:
+                pake.Spake2("A", "1", "2", k).finisci(storto) if storto != a.messaggio() else a.finisci(storto)
+            except pake.ErrorePake:
+                pass
+            else:
+                raise AssertionError(f"messaggio storto accettato: {storto[:10]}")
+        # vettore fisso: tk-desk-app/test/pake_test.dart deve dare gli stessi numeri
+        a = pake.Spake2("A", "123456789", "987654321", bytes(range(32)), casuale=12345678901234567890)
+        b = pake.Spake2("B", "123456789", "987654321", bytes(range(32)), casuale=98765432109876543210)
+        b.finisci(a.messaggio())
+        a.finisci(b.messaggio())
+        assert a.messaggio() == "36248fd005296495ec44d9654840d38ece44021cea09da2555a25d15fc8709de"
+        assert b.messaggio() == "8449501d946aa2017d41ccb4592503954e71b3d7bbc61f5d64fa16324581ecaf"
+        assert a.conferma() == "e926a04f139cced74a28e3999bb2e582e30dff4dd7f5a7dfed12bebe23a21a61"
+        assert b.conferma() == "3e921e9b95e97770690626bab3f61694f4b4a803ade611af414e8f75c01a751b"
+        assert a.sigilla("offerta", "ciao è") == "a41499441380f89e352e03863404992b0322c6f16c6df4b1020496217137c313"
         assert ce.formatta_id("123456789") == "123 456 789" and ce.pulisci_id("123 456 789") == "123456789"
         assert host.password.isdigit() and len(host.password) == 6, "la monouso resta di 6 cifre"
-    prova("firma della password v1 e v2 (giusta, sbagliata, offerta cambiata); monouso di 6 cifre", firma)
+        assert not ce.e_fissa(host.password) and ce.e_fissa("Ufficio-2026!")
+    prova("SPAKE2: stessa password = stessa chiave, sbagliata o ID cambiato = no, sigilli, vettore per l'app", spake)
 
     def vecchia_versione():
-        # una tk-desk di prima della 1.1.0 firma solo con la chiave v1 («prova»): va ancora accettata
-        p = ce.firma(ce.chiave(host.password, id_h), "chiamata", "999", id_h, "n1", "sdp")
-        assert host._verifica("999", "n1", "sdp", {"prova": p})[1] == 1
-        p2 = ce.firma(ce.chiave2(host.password, id_h), "chiamata", "999", id_h, "n1", "sdp")
-        assert host._verifica("999", "n1", "sdp", {"prova2": p2})[1] == 2
-        assert host._verifica("999", "n1", "sdp", {"prova": p2}) is None
-    prova("compatibilità: chiamata firmata con la chiave delle versioni di prima", vecchia_versione)
+        # una tk-desk di prima della 1.2.0 (firma HMAC, nessun «p»): rifiutata con «aggiorna», senza contare tentativi
+        cv = CentralinoFinto(None)
+        cv.registra()
+        cv.invia(id_h, "chiamata", {"sdp": "x", "nonce": "n", "prova2": "ab", "nome": "vecchio", "v": 2})
+        fine = time.time() + 15
+        while time.time() < fine and not cv.cassette[cv.id]:
+            time.sleep(0.1)
+        r = cv.ricevi()
+        assert r and r[0]["tipo"] == "rifiuto" and r[0]["dati"]["motivo"] == "aggiorna", r
+        assert not host._sbagliate, host._sbagliate
+        assert rh.conta("richiesta_accesso") == 0
+    prova("le tk-desk di prima della 1.2.0 non si collegano più (rifiuto «aggiorna»)", vecchia_versione)
+
+    def chi_si_ferma():
+        # chi chiama vede che la sfida non torna e smette: il tentativo conta lo stesso (ATTESA_STRETTA)
+        from tkdesk import pake
+        vecchia = sessione.ATTESA_STRETTA
+        sessione.ATTESA_STRETTA = 2
+        try:
+            host.azzera_tentativi()
+            cv = CentralinoFinto(None)
+            cv.registra()
+            sp = pake.Spake2("A", cv.id, id_h, ce.chiave2("000000", id_h))
+            cv.invia(id_h, "chiamata", {"v": ce.PROTOCOLLO, "p": sp.messaggio(), "fissa": False})
+            assert aspetta_che(lambda: cv.id in host._sbagliate, 20), "il tentativo abbandonato non è stato contato"
+            assert host._bloccato(cv.id) == 0 and host._bloccato(id_h_rem() or "nessuno") == 0
+        finally:
+            sessione.ATTESA_STRETTA = vecchia
+            host.azzera_tentativi()
+    prova("una chiamata lasciata a metà conta come password sbagliata", chi_si_ferma)
+
+    def nomi_file():
+        n = sessione.nome_file_sicuro
+        assert n("..\\..\\Windows\\evil.dll") == "evil.dll"
+        assert n("nota.txt:Zone.Identifier") == "nota.txtZone.Identifier"
+        assert n("foto‮gpj.exe") == "fotogpj.exe" and sessione.e_programma(n("foto‮gpj.exe"))
+        assert n("CON.txt") == "_CON.txt" and n("  ... ") == "file" and n("fattura è prova.pdf") == "fattura è prova.pdf"
+        assert not sessione.e_programma("fattura.pdf") and sessione.e_programma("Setup.EXE")
+    prova("nomi dei file in arrivo puliti (cartelle, «:», caratteri invisibili, nomi riservati)", nomi_file)
 
     def sbagliata():
         k = ctrl.connetti(id_h, "zzzzzz")
@@ -319,7 +382,7 @@ def main():
         k = ctrl.connetti(id_h, "ab3xyz" if host.password != "ab3xyz" else "ab3xyw")
         x = rc.aspetta("sessione_chiusa", test=lambda a: a[0] == k)
         assert "Password sbagliata" in x[0][1]
-        host._sbagliate = 0
+        host.azzera_tentativi()
     prova("la password di prima non vale più", vecchia_password)
 
     def rifiutata():
@@ -370,28 +433,36 @@ def main():
     prova("accesso non presidiato con password fissa: senza conferma, chiave cifrata, per tutti", fissa)
 
     def ospite_vecchio():
-        # dall'altra parte una tk-desk 1.0.x: legge solo «prova» (v1) e il suo rifiuto non dice «v»: 2.
-        # La tk-desk nuova deve riprovare da sola con la chiave v1.
-        verifica, rifiuta = host._verifica, host._rifiuta
+        # dall'altra parte una tk-desk di prima: il suo rifiuto non dice «v»: 3 → «va aggiornata», non «password»
+        rifiuta = host._rifiuta
 
         async def rifiuta_vecchio(a, motivo, **altro):
-            await host._in_thread(host.ce.invia, a, "rifiuto", {"motivo": motivo})
-        host._verifica = lambda da, nonce, sdp, d: verifica(da, nonce, sdp, {"prova": d.get("prova", "")})
-        host._rifiuta = rifiuta_vecchio
+            await host._in_thread(host.ce.invia, a, "rifiuto", {"motivo": "password", "v": 2})
+
+        async def chiamata_vecchia(da, d):
+            await rifiuta_vecchio(da, "password")
+        originale = host._chiamata_in_arrivo
+        host._chiamata_in_arrivo = chiamata_vecchia
         try:
             k = ctrl.connetti(id_h, host.password)
-            try:
-                rc.aspetta("sessione_aperta", test=lambda a: a[0] == k, timeout=40)
-            except AssertionError:
-                raise AssertionError(f"chiusa: {[a for a in rc.ev.get('sessione_chiusa', []) if a[0] == k]}")
-            cambi = rh.conta("password_cambiata")
-            ctrl.chiudi(k)
-            rc.aspetta("sessione_chiusa", test=lambda a: a[0] == k, timeout=15)
-            rh.aspetta("password_cambiata", n=cambi + 1, timeout=15)   # la chiusura cambia la password
+            x = rc.aspetta("sessione_chiusa", test=lambda a: a[0] == k, timeout=30)
+            assert "versione vecchia" in x[0][1], x
         finally:
-            host._verifica, host._rifiuta = verifica, rifiuta
-            host._sbagliate = 0
-    prova("compatibilità: con una tk-desk di prima si riprova da soli con la chiave v1", ospite_vecchio)
+            host._chiamata_in_arrivo, host._rifiuta = originale, rifiuta
+            host.azzera_tentativi()
+    prova("chiamando una tk-desk di prima si legge «va aggiornata»", ospite_vecchio)
+
+    def rubrica_vecchia():
+        k = ctrl.connetti(id_h, "", "ab" * 32)      # chiave v1 salvata nella rubrica dalle versioni 1.0.x
+        x = rc.aspetta("sessione_chiusa", test=lambda a: a[0] == k, timeout=15)
+        assert "scrivila di nuovo" in x[0][1], x
+        imp = Imp(chiave_fissa="cd" * 32, rubrica=[{"id": "123456789", "chiave": "ab" * 32},
+                                                  {"id": "987654321", "chiave": "v2:" + "ef" * 32}])
+        m = sessione.Motore(imp, sorgente_factory=SorgenteFinta, esecutore=Esecutore(finto=True),
+                            centralino=CentralinoFinto(None), audio=AudioFinto())
+        assert not m.ha_password_fissa(), "la password fissa v1 va tolta"
+        assert "chiave" not in imp["rubrica"][0] and util.svela(imp["rubrica"][1]["chiave"]) == "v2:" + "ef" * 32
+    prova("chiavi v1 delle versioni di prima: tolte dalla rubrica e dalla password fissa", rubrica_vecchia)
 
     def a_riposo():
         # su un runner lento la sessione o la richiesta di conferma della prova di prima possono essere ancora
@@ -405,7 +476,7 @@ def main():
         vecchi = sessione.BLOCCHI
         sessione.BLOCCHI = (2, 3, 4)          # nel programma 1, 5 e 15 minuti
         try:
-            host._sbagliate, host._bloccato_fino = 0, 0.0
+            host.azzera_tentativi()
             prima = host.password
             # margini larghi: sul runner Mac Intel di GitHub ogni chiamata è molto più lenta
             for i in range(3):
@@ -430,7 +501,7 @@ def main():
             rh.aspetta("tentativi", test=lambda a: a[0] == 6 and a[1] == 3)
         finally:
             sessione.BLOCCHI = vecchi
-            host._sbagliate, host._bloccato_fino = 0, 0.0
+            host.azzera_tentativi()
     prova("password sbagliate: blocco crescente e password nuova dopo ogni errore oltre il terzo", tentativi)
 
     def inattivita():
@@ -439,7 +510,7 @@ def main():
         sessione.SCADENZA_PASSWORD, sessione.CONTROLLO_SCADENZA = 2, 0.5   # nel programma 10 minuti
         try:
             prima = host.password
-            host._sbagliate, host._bloccato_fino = 0, 0.0   # nessun blocco rimasto dalla prova di prima
+            host.azzera_tentativi()   # nessun blocco rimasto dalla prova di prima
             assert aspetta_che(lambda: host.password != prima, 30), "la password doveva cambiare da sola"
             assert host.password.isdigit() and len(host.password) == 6
             k = ctrl.connetti(id_h, prima)
@@ -447,7 +518,7 @@ def main():
             assert "Password sbagliata" in x[0][1], "la password scaduta non deve più valere"
         finally:
             sessione.SCADENZA_PASSWORD, sessione.CONTROLLO_SCADENZA = vecchi
-            host._sbagliate = 0
+            host.azzera_tentativi()
     prova("la password monouso cambia da sola dopo un periodo senza collegamenti", inattivita)
 
     host.ferma()

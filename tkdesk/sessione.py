@@ -8,6 +8,16 @@ Ruoli:
     manda lo schermo ed esegue mouse e tastiera.
   - computer che CONTROLLA: chiama un ID con la password, riceve il video e manda i comandi.
 
+Stretta di mano dal centralino (protocollo 3, dalla 1.2.0, SPAKE2 in pake.py; A = chi controlla, B = controllato):
+  chiamata  A→B {v, n: codice della chiamata, p: messaggio SPAKE2 di A, fissa: password fissa o monouso}
+  (B ripete «n» in sfida, risposta e rifiuto, A li riporta in offerta: un rifiuto in ritardo di una chiamata di prima
+  non viene preso per la risposta a quella nuova)
+  sfida     B→A {v, p: messaggio di B, c: conferma di B}            (A: conferma sbagliata = password sbagliata)
+  offerta   A→B {c: conferma di A, corpo: JSON {sdp, nome, piattaforma, versione}, sigillo}
+  risposta  B→A {corpo: JSON {sdp, nome, versione}, sigillo}        rifiuto B→A {v, motivo, …} in ogni momento
+  Il centralino passa i messaggi ma non può ricavarne la password né cambiarli (sigillo con la chiave della sessione).
+  Ogni chiamata conta come un tentativo finché A non dimostra di conoscere la password (conferma giusta).
+
 Verso la finestra parla solo con i segnali Qt di `Segnali` (sicuri tra thread). Dalla finestra si chiamano
 i metodi pubblici del Motore, che passano il lavoro al ciclo asyncio.
 
@@ -33,11 +43,13 @@ import os
 import secrets
 import threading
 import time
+import unicodedata
 
 from PySide6.QtCore import QObject, Signal
 
 from tkdesk import VERSION, centralino as ce, util
 from tkdesk import audio as au
+from tkdesk import pake
 from tkdesk.comandi import Esecutore
 
 # STUN di Google: dice a ogni computer il suo indirizzo pubblico, per il collegamento diretto (vedi Leggimi)
@@ -45,12 +57,33 @@ STUN = ["stun:stun.l.google.com:19302", "stun:stun1.l.google.com:19302"]
 ATTESA_CONFERMA = 30         # secondi per «Accetta» sul computer controllato, poi rifiuto automatico
 ATTESA_RISPOSTA = ATTESA_CONFERMA + 20   # chi chiama aspetta anche la conferma dell'altra persona
 ATTESA_COLLEGAMENTO = 25     # secondi perché WebRTC si colleghi
+ATTESA_STRETTA = 20          # secondi per ogni passo della stretta di mano (sfida, offerta)
 PEZZO_FILE = 16 * 1024
 SCADENZA_PASSWORD = 600      # la monouso cambia da sola dopo 10 minuti senza collegamenti
 CONTROLLO_SCADENZA = 5       # ogni quanti secondi si guarda se è scaduta
-TENTATIVI_PER_BLOCCO = 3     # ogni 3 password sbagliate un blocco…
-BLOCCHI = (60, 300, 900)     # …di 1, poi 5, poi 15 minuti
+TENTATIVI_PER_BLOCCO = 3     # ogni 3 password sbagliate DALLO STESSO ID un blocco per quell'ID…
+BLOCCHI = (60, 300, 900)     # …di 1, poi 5, poi 15 minuti (gli altri ID possono chiamare: niente blocchi dispettosi)
 OBLIO_TENTATIVI = 3600       # dopo un'ora senza tentativi sbagliati si riparte da zero
+MAX_SBAGLIATE_ORA = 20       # da tutti gli ID insieme in un'ora: oltre, nessuno entra per…
+BLOCCO_TUTTI = 900           # …15 minuti (chi prova da tanti ID diversi)
+ESEGUIBILI = {".exe", ".msi", ".bat", ".cmd", ".com", ".scr", ".ps1", ".vbs", ".vbe", ".js", ".jse", ".wsf", ".hta",
+              ".lnk", ".reg", ".jar", ".app", ".pkg", ".dmg", ".command", ".sh", ".py"}
+_RISERVATI = {"CON", "PRN", "AUX", "NUL", *(f"COM{i}" for i in range(1, 10)), *(f"LPT{i}" for i in range(1, 10))}
+
+
+def nome_file_sicuro(nome):
+    """Nome di un file in arrivo: niente cartelle, niente «:» (flussi nascosti di Windows), niente caratteri
+    invisibili o che girano il testo («foto‮gpj.exe» si leggerebbe «fotoexe.jpg»), niente nomi riservati."""
+    n = os.path.basename(str(nome or "").replace("\\", "/"))
+    n = "".join(c for c in n if unicodedata.category(c) not in ("Cc", "Cf") and c not in '<>:"/|?*')
+    n = n.strip().rstrip(". ")[:180].strip()
+    if os.path.splitext(n)[0].upper() in _RISERVATI:
+        n = "_" + n
+    return n or "file"
+
+
+def e_programma(nome):
+    return os.path.splitext(str(nome or ""))[1].lower() in ESEGUIBILI
 
 
 def _alza_bitrate():
@@ -199,16 +232,16 @@ class Motore:
         self.audio = audio or au.Audio()
         self.id = ""
         self.password = ce.nuova_password()
-        self._chiave_monouso = b""    # v1 (versioni di prima)
-        self._chiave_monouso2 = b""   # v2
+        self._chiave_monouso = b""
         self._password_creata = time.monotonic()
-        self._chiamate = {}           # id remoto → Future della risposta (lato di chi controlla)
+        self._chiamate = {}           # id remoto → coda dei messaggi della stretta di mano (lato di chi controlla)
+        self._strette = {}            # id di chi chiama → Future dell'«offerta» (lato controllato)
         self._uscite = {}             # chiave → _Sessione (io controllo)
         self._entrate = {}            # id remoto → _Sessione (mi controllano)
         self._richieste = {}          # richiesta → (Future della conferma, id di chi chiama)
-        self._sbagliate = 0           # password sbagliate di fila
-        self._ultima_sbagliata = 0.0
-        self._bloccato_fino = 0.0
+        self._sbagliate = {}          # id di chi chiama → [sbagliate di fila, quando l'ultima, bloccato fino a]
+        self._sbagliate_tutte = []    # quando (monotonic), tutti gli ID insieme, nell'ultima ora
+        self._bloccato_fino = 0.0     # blocco per tutti (troppe sbagliate da tanti ID)
         self._contatore = 0
         self.attivo = True
         self._migra_segreti()
@@ -343,10 +376,14 @@ class Motore:
             # in un compito a parte: la conferma di chi è davanti può durare 30 secondi e intanto il centralino
             # deve continuare a leggere i messaggi (es. «chiudi»)
             asyncio.ensure_future(self._chiamata_protetta(da, d))
-        elif tipo in ("risposta", "rifiuto"):
-            fut = self._chiamate.get(da)
-            if fut and not fut.done():
-                fut.set_result((tipo, d))
+        elif tipo in ("sfida", "risposta", "rifiuto"):
+            coda = self._chiamate.get(da)
+            if coda is not None:
+                coda.put_nowait((tipo, d))
+        elif tipo == "offerta":
+            n, fut = self._strette.get(da, ("", None))
+            if fut and not fut.done() and str(d.get("n", "")) == n:
+                fut.set_result(d)
         elif tipo == "chiudi":
             s = self._entrate.get(da)
             if s:
@@ -354,11 +391,11 @@ class Motore:
 
     # ───────────────────────────────────────── password e accesso non presidiato
     async def _rinnova_password(self, id_=None):
-        """Nuova monouso con le sue due chiavi (la v2 è lenta apposta: si calcola fuori dal ciclo)."""
+        """Nuova monouso con la sua chiave (lenta apposta: si calcola fuori dal ciclo)."""
         id_ = id_ or self.id
         pw = ce.nuova_password()
-        k1, k2 = await self._in_thread(lambda: (ce.chiave(pw, id_), ce.chiave2(pw, id_)))
-        self.password, self._chiave_monouso, self._chiave_monouso2 = pw, k1, k2
+        k = await self._in_thread(ce.chiave2, pw, id_)
+        self.password, self._chiave_monouso = pw, k
         self._password_creata = time.monotonic()
         self.s.password_cambiata.emit(pw)
 
@@ -370,7 +407,7 @@ class Motore:
         """La monouso cambia da sola dopo SCADENZA_PASSWORD secondi senza collegamenti (né richieste in corso)."""
         while self.attivo:
             await asyncio.sleep(CONTROLLO_SCADENZA)
-            if (self.id and not self._entrate and not self._richieste
+            if (self.id and not self._entrate and not self._richieste and not self._strette
                     and time.monotonic() - self._password_creata >= SCADENZA_PASSWORD):
                 await self._rinnova_password()
 
@@ -402,26 +439,35 @@ class Motore:
         return bool(self.imp.value("chiave_fissa", ""))
 
     def _chiave_fissa(self):
-        """(versione, chiave) della password fissa, o (0, b"") se non c'è o non si legge."""
+        """Chiave della password fissa, o b"" se non c'è o non si legge."""
         testo = util.svela(self.imp.value("chiave_fissa", ""))
         try:
-            if testo.startswith("v2:"):
-                return 2, bytes.fromhex(testo[3:])
-            return (1, bytes.fromhex(testo)) if testo else (0, b"")
+            return bytes.fromhex(testo[3:]) if testo.startswith("v2:") else b""
         except ValueError:
-            return 0, b""
+            return b""
 
     def _migra_segreti(self):
-        """Versioni di prima: chiave della password fissa e password della rubrica in chiaro in impostazioni.json.
-        Si cifrano adesso (restano v1: per la v2 serve la password, va reimpostata)."""
+        """Versioni di prima: chiavi in chiaro in impostazioni.json → si cifrano. Le chiavi v1 (fino alla 1.0.x) con
+        il protocollo 3 non valgono più: si tolgono (password fissa e rubrica vanno riscritte)."""
         try:
             fissa = self.imp.value("chiave_fissa", "")
-            if fissa and not util.protetto(fissa):
+            testo = util.svela(fissa)
+            if testo and not testo.startswith("v2:"):
+                util.dimentica(fissa)
+                self.imp.setValue("chiave_fissa", "")
+                _diagnosi("password fissa delle versioni di prima tolta: va reimpostata")
+            elif fissa and not util.protetto(fissa):
                 self.imp.setValue("chiave_fissa", util.proteggi(fissa, "chiave-fissa"))
             rubrica = list(self.imp.value("rubrica", []) or [])
             cambiata = False
             for v in rubrica:
-                if isinstance(v, dict) and v.get("chiave") and not util.protetto(v["chiave"]):
+                if not isinstance(v, dict) or not v.get("chiave"):
+                    continue
+                testo = util.svela(v["chiave"])
+                if testo and not testo.startswith("v2:"):
+                    util.dimentica(v.pop("chiave"))
+                    cambiata = True
+                elif not util.protetto(v["chiave"]):
                     v["chiave"] = util.proteggi(v["chiave"], "rubrica-" + str(v.get("id", "")))
                     cambiata = True
             if cambiata:
@@ -429,31 +475,43 @@ class Motore:
         except Exception as exc:
             _diagnosi(f"segreti non cifrati: {exc!r}")
 
-    def _bloccato(self):
-        return max(0, int(self._bloccato_fino - time.monotonic() + 0.999))
+    def _bloccato(self, da):
+        voce = self._sbagliate.get(da)
+        fino = max(self._bloccato_fino, voce[2] if voce else 0.0)
+        return max(0, int(fino - time.monotonic() + 0.999))
 
-    async def _tentativo_sbagliato(self):
-        """Password sbagliata: ogni 3 un blocco (1, 5, 15 minuti); oltre la terza la monouso cambia a ogni errore,
-        così chi prova a indovinarla ricomincia sempre da capo."""
+    def azzera_tentativi(self):
+        self._sbagliate, self._sbagliate_tutte, self._bloccato_fino = {}, [], 0.0
+
+    async def _tentativo_sbagliato(self, da):
+        """Password sbagliata da `da`: ogni 3 un blocco per quell'ID (1, 5, 15 minuti); oltre le 3 in un'ora (da
+        chiunque) la monouso cambia a ogni errore, così chi prova a indovinarla ricomincia sempre da capo; oltre le
+        MAX_SBAGLIATE_ORA non entra nessuno per BLOCCO_TUTTI secondi."""
         ora = time.monotonic()
-        if ora - self._ultima_sbagliata > OBLIO_TENTATIVI:
-            self._sbagliate = 0
-        self._ultima_sbagliata = ora
-        self._sbagliate += 1
-        if self._sbagliate > TENTATIVI_PER_BLOCCO:
+        self._sbagliate_tutte = [t for t in self._sbagliate_tutte if ora - t < OBLIO_TENTATIVI] + [ora]
+        voce = self._sbagliate.get(da)
+        if voce is None or ora - voce[1] > OBLIO_TENTATIVI:
+            voce = [0, 0.0, 0.0]
+        voce[0] += 1
+        voce[1] = ora
+        self._sbagliate[da] = voce
+        if len(self._sbagliate_tutte) > TENTATIVI_PER_BLOCCO:
             await self._rinnova_password()
         blocco = 0
-        if self._sbagliate % TENTATIVI_PER_BLOCCO == 0:
-            blocco = BLOCCHI[min(self._sbagliate // TENTATIVI_PER_BLOCCO, len(BLOCCHI)) - 1]
-            self._bloccato_fino = ora + blocco
-        self.s.tentativi.emit(self._sbagliate, blocco)
+        if voce[0] % TENTATIVI_PER_BLOCCO == 0:
+            blocco = BLOCCHI[min(voce[0] // TENTATIVI_PER_BLOCCO, len(BLOCCHI)) - 1]
+            voce[2] = ora + blocco
+        if len(self._sbagliate_tutte) >= MAX_SBAGLIATE_ORA:
+            self._bloccato_fino = ora + BLOCCO_TUTTI
+            blocco = max(blocco, BLOCCO_TUTTI)
+        self.s.tentativi.emit(voce[0], blocco)
 
     # ───────────────────────────────────────── lato CONTROLLATO
     async def _rifiuta(self, a, motivo, **altro):
         _diagnosi(f"chiamata da {a} rifiutata: {motivo}")
         try:
-            # «v»: 2 = qui c'è una tk-desk 1.1+: chi chiama non riprova con la chiave delle versioni di prima
-            await self._in_thread(self.ce.invia, a, "rifiuto", {"motivo": motivo, "v": 2, **altro})
+            # «v»: chi chiama capisce che qui c'è una tk-desk con il protocollo nuovo (senza = versione vecchia)
+            await self._in_thread(self.ce.invia, a, "rifiuto", {"motivo": motivo, "v": ce.PROTOCOLLO, **altro})
         except ce.ErroreCentralino:
             pass
 
@@ -463,23 +521,45 @@ class Motore:
         except Exception as exc:
             _diagnosi(f"chiamata da {da} non gestita: {exc!r}", exc)
 
-    def _verifica(self, da, nonce, sdp, d):
-        """Quale chiave firma la chiamata: (chiave, versione, con_fissa) oppure None."""
-        prova, prova2 = str(d.get("prova", "") or ""), str(d.get("prova2", "") or "")
-        candidati = []
-        if prova2 and self._chiave_monouso2:
-            candidati.append((self._chiave_monouso2, 2, False, prova2))
-        if prova and self._chiave_monouso:
-            candidati.append((self._chiave_monouso, 1, False, prova))
-        v, fissa = self._chiave_fissa()
-        if fissa:
-            p = prova2 if v == 2 else prova
-            if p:
-                candidati.append((fissa, v, True, p))
-        for chiave, v, con_fissa, p in candidati:
-            if ce.firma_valida(chiave, "chiamata", da, self.id, nonce, sdp, p):
-                return chiave, v, con_fissa
-        return None
+    async def _stretta(self, da, d):
+        """Lato controllato della stretta di mano SPAKE2: (Spake2, contenuto dell'offerta) se chi chiama conosce la
+        password, None se no (già contato come tentativo sbagliato e rifiutato)."""
+        n = str(d.get("n", ""))[:32]
+        con_fissa = bool(d.get("fissa"))
+        chiave = self._chiave_fissa() if con_fissa else self._chiave_monouso
+        # senza password fissa si risponde lo stesso, con una chiave a caso: da fuori non si capisce se c'è
+        sp = pake.Spake2("B", da, self.id, chiave or secrets.token_bytes(32))
+        try:
+            await self._in_thread(sp.finisci, d.get("p", ""))
+        except pake.ErrorePake:
+            await self._tentativo_sbagliato(da)
+            await self._rifiuta(da, "password", n=n)
+            return None
+        fut = self.loop.create_future()
+        self._strette[da] = (n, fut)
+        try:
+            await self._in_thread(self.ce.invia, da, "sfida", {"v": ce.PROTOCOLLO, "n": n, "p": sp.messaggio(),
+                                                               "c": sp.conferma()})
+            d3 = await asyncio.wait_for(fut, ATTESA_STRETTA)
+        except (ce.ErroreCentralino, asyncio.TimeoutError):
+            d3 = None     # chi chiama ha visto che la password è sbagliata e non va avanti: conta lo stesso
+        finally:
+            self._strette.pop(da, None)
+        if d3 is None or not sp.conferma_valida(d3.get("c")):
+            await self._tentativo_sbagliato(da)
+            await self._rifiuta(da, "password", n=n)
+            return None
+        corpo = str(d3.get("corpo", ""))
+        try:
+            if not sp.sigillo_valido("offerta", corpo, d3.get("sigillo")):
+                raise ValueError("sigillo")
+            offerta = json.loads(corpo)
+            if not isinstance(offerta, dict) or not offerta.get("sdp"):
+                raise ValueError("offerta")
+        except ValueError:
+            await self._rifiuta(da, "manomesso", n=n)    # messaggio cambiato per strada
+            return None
+        return sp, offerta, con_fissa, n
 
     async def _chiedi_conferma(self, da, nome):
         """Finestra «… vuole controllare questo computer — Accetta / Rifiuta» sul computer controllato.
@@ -507,27 +587,35 @@ class Motore:
     async def _chiamata_in_arrivo(self, da, d):
         from aiortc import RTCConfiguration, RTCIceServer, RTCPeerConnection, RTCSessionDescription
 
-        nonce, sdp = str(d.get("nonce", "")), str(d.get("sdp", ""))
-        attesa = self._bloccato()
+        n = str(d.get("n", ""))[:32]
+        try:
+            vecchia = int(d.get("v") or 0) < ce.PROTOCOLLO or not d.get("p")
+        except (TypeError, ValueError):
+            vecchia = True
+        if vecchia:
+            return await self._rifiuta(da, "aggiorna", n=n)   # tk-desk di prima della 1.2.0
+        attesa = self._bloccato(da)
         if attesa:
-            return await self._rifiuta(da, "bloccato", attesa=attesa)
-        if any(x[1] == da for x in self._richieste.values()):
-            return   # la stessa chiamata ripetuta mentre chi è davanti sta decidendo
-        trovata = self._verifica(da, nonce, sdp, d)
-        if trovata is None:
-            await self._tentativo_sbagliato()
-            return await self._rifiuta(da, "password")
-        chiave, versione, con_fissa = trovata
-        self._sbagliate = 0
+            return await self._rifiuta(da, "bloccato", n=n, attesa=attesa)
+        if da in self._strette or any(x[1] == da for x in self._richieste.values()):
+            return   # la stessa chiamata ripetuta mentre la stretta di mano o chi è davanti sta decidendo
+        stretta = await self._stretta(da, d)
+        if stretta is None:
+            return
+        sp, offerta, con_fissa, n = stretta
+        self._sbagliate.pop(da, None)
+        sdp = str(offerta["sdp"])
+        d = {"nome": str(offerta.get("nome", ""))[:60], "piattaforma": str(offerta.get("piattaforma", ""))[:20],
+             "versione": str(offerta.get("versione", ""))[:20]}
         if (self._entrate and da not in self._entrate) or self._richieste:
-            return await self._rifiuta(da, "occupato")
+            return await self._rifiuta(da, "occupato", n=n)
         if not con_fissa:
             # con la monouso decide sempre chi è davanti al computer (difesa dalle truffe al telefono)
-            if not await self._chiedi_conferma(da, str(d.get("nome", ""))[:60]):
+            if not await self._chiedi_conferma(da, d["nome"]):
                 await self._rinnova_password()   # chi aveva la password non può riprovare
-                return await self._rifiuta(da, "rifiutato")
+                return await self._rifiuta(da, "rifiutato", n=n)
             if not self.attivo or (self._entrate and da not in self._entrate):
-                return await self._rifiuta(da, "occupato")
+                return await self._rifiuta(da, "occupato", n=n)
         if da in self._entrate:
             await self._chiudi(self._entrate[da], "nuovo collegamento", avvisa=False)
 
@@ -571,12 +659,11 @@ class Motore:
         pc.addTrack(crea_traccia(sess.sorgente))
         pc.addTrack(au.crea_traccia(self.audio, lambda: sess.voce))
         await pc.setLocalDescription(await pc.createAnswer())
-        risposta = pc.localDescription.sdp
+        corpo = json.dumps({"sdp": pc.localDescription.sdp, "nome": self._nome(), "versione": VERSION},
+                           separators=(",", ":"))
         try:
-            await self._in_thread(self.ce.invia, da, "risposta", {
-                "sdp": risposta, ("prova2" if versione == 2 else "prova"): ce.firma(chiave, "risposta", self.id, da,
-                                                                                     nonce, risposta),
-                "v": 2, "nome": self._nome(), "versione": VERSION})
+            await self._in_thread(self.ce.invia, da, "risposta", {"n": n, "corpo": corpo,
+                                                                  "sigillo": sp.sigilla("risposta", corpo)})
         except ce.ErroreCentralino:
             await self._chiudi(sess, "centralino non raggiungibile", avvisa=False)
             return
@@ -698,50 +785,80 @@ class Motore:
 
         await pc.setLocalDescription(await pc.createOffer())
         offerta = pc.localDescription.sdp
-        # prima la chiave v2; la v1 solo se dall'altra parte c'è una tk-desk di prima della 1.1.0
-        if chiave_salvata.startswith("v2:"):
-            tentativi = [(2, lambda: bytes.fromhex(chiave_salvata[3:]))]
-        elif chiave_salvata:
-            tentativi = [(1, lambda: bytes.fromhex(chiave_salvata))]
+        if chiave_salvata and not chiave_salvata.startswith("v2:"):
+            return await self._chiudi(sess, "La password salvata è di una versione vecchia di tk-desk: scrivila di "
+                                            "nuovo.", avvisa=False)
+        if chiave_salvata:
+            chiave, fissa = bytes.fromhex(chiave_salvata[3:]), True
         else:
-            tentativi = [(2, lambda: ce.chiave2(password, id_remoto)), (1, lambda: ce.chiave(password, id_remoto))]
-        for i, (versione, ricava) in enumerate(tentativi):
-            chiave = await self._in_thread(ricava)
-            nonce = secrets.token_hex(16)
-            fut = self.loop.create_future()
-            self._chiamate[id_remoto] = fut
-            self.s.stato_chiamata.emit(chiave_s, "Chiamo il computer… Dall'altra parte devono premere «Accetta».")
-            campo = "prova2" if versione == 2 else "prova"
-            try:
-                # «pro»: True resta per le tk-desk di prima, che con la password fissa lo chiedevano
-                await self._in_thread(self.ce.invia, id_remoto, "chiamata", {
-                    "sdp": offerta, "nonce": nonce, campo: ce.firma(chiave, "chiamata", self.id, id_remoto, nonce, offerta),
-                    "nome": self._nome(), "piattaforma": piattaforma(), "versione": VERSION, "pro": True})
-                tipo, d = await asyncio.wait_for(fut, ATTESA_RISPOSTA)
-            except ce.ErroreCentralino as e:
-                return await self._chiudi(sess, str(e), avvisa=False)
-            except asyncio.TimeoutError:
-                return await self._chiudi(sess, "Il computer non risponde: controlla che tk-desk sia aperto e che "
-                                                "l'altra persona abbia premuto «Accetta».", avvisa=False)
-            finally:
-                self._chiamate.pop(id_remoto, None)
-            vecchia = d.get("v") != 2
-            if not (tipo == "rifiuto" and d.get("motivo") == "password" and vecchia and i + 1 < len(tentativi)):
-                break
+            chiave, fissa = await self._in_thread(ce.chiave2, password, id_remoto), ce.e_fissa(password)
+        sp = pake.Spake2("A", self.id, id_remoto, chiave)
+        n = secrets.token_hex(8)
+        coda = asyncio.Queue()
+        self._chiamate[id_remoto] = coda
+
+        async def prendi(secondi):
+            """Il prossimo messaggio di QUESTA chiamata (quelli di una chiamata di prima si buttano).
+            Un rifiuto senza «n» viene da una tk-desk di prima: vale (dice che va aggiornata)."""
+            fine = time.monotonic() + secondi
+            while True:
+                tipo_, d_ = await asyncio.wait_for(coda.get(), max(0.1, fine - time.monotonic()))
+                if str(d_.get("n", "")) == n or (tipo_ == "rifiuto" and not d_.get("n")):
+                    return tipo_, d_
+
+        self.s.stato_chiamata.emit(chiave_s, "Chiamo il computer… Dall'altra parte devono premere «Accetta».")
+        try:
+            await self._in_thread(self.ce.invia, id_remoto, "chiamata",
+                                  {"v": ce.PROTOCOLLO, "n": n, "p": sp.messaggio(), "fissa": fissa})
+            tipo, d = await prendi(ATTESA_STRETTA + 10)
+            if tipo == "sfida":
+                try:
+                    await self._in_thread(sp.finisci, d.get("p", ""))
+                    giusta = sp.conferma_valida(d.get("c"))
+                except pake.ErrorePake:
+                    giusta = False
+                if not giusta:
+                    # l'altro computer conta il tentativo subito, senza aspettare
+                    await self._in_thread(self.ce.invia, id_remoto, "offerta", {"n": n, "c": ""})
+                    return await self._chiudi(sess, "Password sbagliata.", avvisa=False)
+                corpo = json.dumps({"sdp": offerta, "nome": self._nome(), "piattaforma": piattaforma(),
+                                    "versione": VERSION}, separators=(",", ":"))
+                await self._in_thread(self.ce.invia, id_remoto, "offerta", {
+                    "n": n, "c": sp.conferma(), "corpo": corpo, "sigillo": sp.sigilla("offerta", corpo)})
+                tipo, d = await prendi(ATTESA_RISPOSTA)
+        except ce.ErroreCentralino as e:
+            return await self._chiudi(sess, str(e), avvisa=False)
+        except asyncio.TimeoutError:
+            return await self._chiudi(sess, "Il computer non risponde: controlla che tk-desk sia aperto e che "
+                                            "l'altra persona abbia premuto «Accetta».", avvisa=False)
+        finally:
+            self._chiamate.pop(id_remoto, None)
         if tipo == "rifiuto":
-            minuti = max(1, round(int(d.get("attesa") or 60) / 60))
+            try:
+                minuti = max(1, round(int(d.get("attesa") or 60) / 60))
+            except (TypeError, ValueError):
+                minuti = 1
             motivi = {"password": "Password sbagliata.",
                       "bloccato": f"Troppe password sbagliate: il computer non accetta tentativi per {minuti} "
                                   f"minut{'o' if minuti == 1 else 'i'}.",
                       "occupato": "Quel computer è già in una sessione con qualcun altro.",
                       "rifiutato": "L'altra persona non ha accettato il collegamento (o non ha risposto in 30 secondi).",
-                      "serve-pro": "Su quel computer c'è una versione vecchia di tk-desk: per entrare con la password "
-                                   "fissa va aggiornata."}
-            return await self._chiudi(sess, motivi.get(d.get("motivo"), "Collegamento rifiutato."), avvisa=False)
-        risposta = str(d.get("sdp", ""))
-        if not ce.firma_valida(chiave, "risposta", id_remoto, self.id, nonce, risposta, d.get(campo)):
+                      "manomesso": "Il collegamento è stato alterato per strada: interrotto per sicurezza.",
+                      "aggiorna": "Questa versione di tk-desk non si collega più: aggiornala."}
+            if (d.get("v") or 0) != ce.PROTOCOLLO:
+                motivo = "Su quel computer c'è una versione vecchia di tk-desk: va aggiornata."
+            else:
+                motivo = motivi.get(d.get("motivo"), "Collegamento rifiutato.")
+            return await self._chiudi(sess, motivo, avvisa=False)
+        corpo = str(d.get("corpo", ""))
+        try:
+            if tipo != "risposta" or not sp.sigillo_valido("risposta", corpo, d.get("sigillo")):
+                raise ValueError("sigillo")
+            r = json.loads(corpo)
+            risposta = str(r["sdp"])
+        except (ValueError, KeyError, TypeError):
             return await self._chiudi(sess, "Risposta non firmata: collegamento interrotto per sicurezza.", avvisa=False)
-        sess.info["nome"] = d.get("nome", "")
+        sess.info["nome"] = str(r.get("nome", ""))[:60]
         self.s.stato_chiamata.emit(chiave_s, "Collegamento in corso…")
         await pc.setRemoteDescription(RTCSessionDescription(risposta, "answer"))
         try:
@@ -915,7 +1032,7 @@ class Motore:
             self.s.file_rifiutato.emit(sess.chiave, str(d.get("n", ""))[:180], str(d.get("motivo", "rifiutato"))[:80])
             return
         if t == "file":
-            nome = os.path.basename(str(d.get("n", "file")).replace("\\", "/"))[:180].strip() or "file"
+            nome = nome_file_sicuro(d.get("n", "file"))
             try:
                 totale = int(d.get("size", 0))
             except (TypeError, ValueError):

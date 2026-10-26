@@ -1,18 +1,13 @@
 """Centralino di tk-desk: ID del computer e scambio dei messaggi per far conoscere i due computer.
 
 Il server (tk-license-server, /desk/*) fa da cassetta delle lettere: passa le offerte WebRTC, non vede lo schermo,
-i file né la chat (vanno diretti e cifrati da un computer all'altro) e la password non gli arriva in chiaro.
-La password la controlla il computer controllato: chi chiama firma l'offerta con una chiave ricavata dalla
-password (PBKDF2 + HMAC), chi risponde firma la risposta. Una password monouso di 6 cifre però è corta: chi
-leggesse i messaggi del centralino potrebbe provarle tutte. Per questo cambia da sola dopo 10 minuti e dopo ogni
-sessione, e chi è davanti al computer deve comunque premere «Accetta».
-
-Chiavi: v2 = 600.000 giri (dalla 1.1.0, campo «prova2»); v1 = 50.000 giri (campo «prova»), solo per parlare con le
-versioni di prima. Una tk-desk nuova chiama con la v2 e ripete con la v1 solo se dall'altra parte c'è una versione
-vecchia (il rifiuto non dice «v»: 2).
+i file né la chat (vanno diretti e cifrati da un computer all'altro) e la password non gli passa mai.
+Dalla 1.2.0 (protocollo 3) la password la verificano i due computer con SPAKE2 (pake.py): dai messaggi del
+centralino non si ricava, nemmeno provandole tutte. La chiave della password resta PBKDF2 (chiave2), lenta apposta
+per chi rubasse il file delle impostazioni. Le versioni di prima (firma HMAC, chiavi v1 e v2) non si collegano più:
+il centralino le rifiuta (Pietro, 26/10: «chi non aggiorna il software non funziona»).
 """
 import hashlib
-import hmac
 import json
 import os
 import platform
@@ -25,6 +20,7 @@ import urllib.request
 from tkdesk import VERSION
 
 SERVER = os.environ.get("TKDESK_SERVER", "https://pietrodefilippis.it/wp-json/tk-license/v1/desk")
+PROTOCOLLO = 3               # SPAKE2: il centralino rifiuta chi ne dichiara uno più vecchio
 
 # password monouso: 6 cifre, facili da dettare al telefono (Pietro, 25/10: «solo numerica»)
 ALFABETO = "0123456789"
@@ -50,8 +46,7 @@ def pulisci_id(testo):
     return s if len(s) == 9 else ""
 
 
-GIRI_V1 = 50_000             # versioni fino alla 1.0.x
-GIRI = 600_000               # dalla 1.1.0
+GIRI = 600_000
 
 
 def _normalizza(password):
@@ -61,28 +56,16 @@ def _normalizza(password):
     return pw.encode("utf-8")
 
 
-def chiave(password, id_controllato):
-    """Chiave v1 (50.000 giri): solo per parlare con le tk-desk di prima della 1.1.0."""
-    return hashlib.pbkdf2_hmac("sha256", _normalizza(password), f"tk-desk|{id_controllato}".encode(), GIRI_V1)
+def e_fissa(password):
+    """La monouso ha 6 cifre, la fissa almeno 8 caratteri: chi chiama dice quale delle due sta usando."""
+    return len((password or "").strip().replace(" ", "")) > 6
 
 
 def chiave2(password, id_controllato):
-    """Chiave di firma ricavata dalla password e dall'ID del computer controllato (lenta apposta: 600.000 giri).
-    Il computer controllato conserva solo questa (cifrata, vedi util.proteggi), mai la password fissa in chiaro."""
+    """Chiave della password per SPAKE2, ricavata anche dall'ID del computer controllato (lenta apposta: 600.000
+    giri). Il computer controllato conserva solo questa (cifrata, vedi util.proteggi), mai la password fissa in
+    chiaro; la rubrica di chi controlla idem («v2:<esadecimale>»)."""
     return hashlib.pbkdf2_hmac("sha256", _normalizza(password), f"tk-desk-v2|{id_controllato}".encode(), GIRI)
-
-
-def _impronta(sdp):
-    return hashlib.sha256(sdp.encode("utf-8")).hexdigest()
-
-
-def firma(chiave_, tipo, da, a, nonce, sdp):
-    msg = f"tk-desk-{tipo}|{da}|{a}|{nonce}|{_impronta(sdp)}".encode()
-    return hmac.new(chiave_, msg, hashlib.sha256).hexdigest()
-
-
-def firma_valida(chiave_, tipo, da, a, nonce, sdp, prova):
-    return hmac.compare_digest(firma(chiave_, tipo, da, a, nonce, sdp), str(prova or ""))
 
 
 def id_dispositivo():
@@ -153,7 +136,7 @@ class Centralino:
     def registra(self):
         from tkdesk.tk_licenza import piattaforma
         r = self._post("registra", {"dispositivo": self.dispositivo, "segreto": self.segreto, "nome": nome_computer(self.imp),
-                                    "piattaforma": piattaforma(), "versione": VERSION})
+                                    "piattaforma": piattaforma(), "versione": VERSION, "protocollo": PROTOCOLLO})
         self.id = r["id"]
         self.imp.setValue("centralino_id", self.id)
         return self.id
