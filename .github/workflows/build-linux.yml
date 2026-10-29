@@ -2,12 +2,8 @@ name: Build Linux
 
 # Solo su richiesta (gh workflow run), come il Mac: si costruisce quando si pubblica una versione.
 # Runner ubuntu-22.04: l'AppImage chiede la glibc della macchina di build, così gira da Ubuntu 22.04 in su.
-# PROVVISORIO: parte anche a ogni push sul ramo «linux» (gh workflow run dà 404 finché il file non è su main);
-# da togliere con l'ultimo commit del ramo.
 on:
   workflow_dispatch:
-  push:
-    branches: ['linux']
 
 permissions:
   contents: write
