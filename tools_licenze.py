@@ -2,8 +2,8 @@
 inclusi DAVVERO (presi dai *.dist-info del venv di build) e COMPONENTI.txt (componente, versione, licenza, dove si
 scarica il sorgente).
 
-Uso (con il Python del venv di build):  python tools_licenze.py <cartella-di-destinazione> [--mac]
-Lo chiamano installer/build.ps1 (Windows) e mac/build_mac.sh (Mac).
+Uso (con il Python del venv di build):  python tools_licenze.py <cartella-di-destinazione> [--mac | --linux]
+Lo chiamano installer/build.ps1 (Windows), mac/build_mac.sh (Mac) e linux/build_linux.sh (Linux).
 """
 import os
 import re
@@ -14,6 +14,18 @@ from importlib import metadata
 ROOT = os.path.dirname(os.path.abspath(__file__))
 # quello che tk-desk importa; il resto (shiboken6, aioice, cryptography…) viene dalle dipendenze
 RADICI = ["pyside6-essentials", "certifi", "aiortc", "mss", "pynput", "numpy", "sounddevice"]
+# solo nel pacchetto per Linux: portachiavi e portali (D-Bus), pynput con X11
+RADICI_LINUX = ["secretstorage", "jeepney", "python-xlib"]
+# librerie native prese dai pacchetti Ubuntu (apt-get download, vedi linux/build_linux.sh): cartella
+# build/linux-libs/<pacchetto>/ con il file «copyright» di Debian e «versione»
+NATIVE_LINUX = [
+    ("libportaudio2", "PortAudio (libportaudio.so.2: microfono e altoparlanti della chiamata)", "MIT",
+     "http://www.portaudio.com/ e https://packages.ubuntu.com/source/jammy/portaudio19"),
+    ("libjack-jackd2-0", "JACK (libjack.so.0, la chiede PortAudio)", "LGPL-2.1-or-later",
+     "https://jackaudio.org/ e https://packages.ubuntu.com/source/jammy/jackd2"),
+    ("libxcb-cursor0", "libxcb-cursor (libxcb-cursor.so.0, serve a Qt con X11)", "MIT/X11",
+     "https://gitlab.freedesktop.org/xorg/lib/libxcb-cursor"),
+]
 QT_SORGENTE = ("https://download.qt.io/official_releases/QtForPython/ e "
                "https://code.qt.io/cgit/pyside/pyside-setup.git")
 # librerie native che stanno DENTRO alcuni pacchetti Python
@@ -51,9 +63,9 @@ def _marcatore_ok(req):
         return True   # nel dubbio la si prende, se è installata
 
 
-def distribuzioni():
+def distribuzioni(linux=False):
     """Le distribuzioni installate raggiungibili dalle RADICI (dipendenze comprese)."""
-    viste, coda, fuori = {}, list(RADICI), []
+    viste, coda, fuori = {}, list(RADICI) + (RADICI_LINUX if linux else []), []
     while coda:
         n = coda.pop(0)
         if n in viste:
@@ -118,7 +130,7 @@ def _licenza_python():
     return os.path.join(ROOT, "licenze", "Python-PSF.txt")
 
 
-def prepara(dest, mac=False):
+def prepara(dest, mac=False, linux=False):
     from tkdesk import VERSION
     if os.path.isdir(dest):
         shutil.rmtree(dest)
@@ -128,12 +140,13 @@ def prepara(dest, mac=False):
         if f.endswith(".txt"):
             shutil.copyfile(os.path.join(ROOT, "licenze", f), os.path.join(dest, f))
     shutil.copyfile(_licenza_python(), os.path.join(dest, "Python-LICENSE.txt"))
-    viste, fuori = distribuzioni()
+    viste, fuori = distribuzioni(linux)
     if fuori and not mac:
         print("attenzione, non installati:", ", ".join(fuori))
     py = ".".join(map(str, sys.version_info[:3]))
+    sistema = "macOS" if mac else "Linux" if linux else "Windows"
     righe = [
-        f"tk-desk {VERSION} — componenti inclusi nel pacchetto ({'macOS' if mac else 'Windows'})",
+        f"tk-desk {VERSION} — componenti inclusi nel pacchetto ({sistema})",
         "=" * 72,
         "tk-desk è software libero: GNU AGPL-3.0-or-later (COPYING-AGPL-3.0.txt).",
         f"Codice sorgente: https://github.com/tecnikgeek-repo/tk-desk-desktop/tree/v{VERSION}",
@@ -151,25 +164,51 @@ def prepara(dest, mac=False):
             lic = "LGPL-3.0-only (LGPL-3.0.txt + GPL-3.0.txt)"
         righe.append(f"{nome} | {d.version} | {lic} | {sorgente}")
         for titolo, lic_d, src in DENTRO.get(n, []):
+            if linux and n == "sounddevice":
+                continue   # su Linux il pacchetto sounddevice non ha PortAudio dentro: vedi sotto (NATIVE_LINUX)
             righe.append(f"  dentro {nome}: {titolo.format(v=d.version)} | {lic_d} | {src}")
         for base, p in _file_licenza(d):
             nome_file = re.sub(r"[^A-Za-z0-9._-]", "_", f"{nome}-{base}")
             if not nome_file.lower().endswith(".txt"):
                 nome_file += ".txt"
             shutil.copyfile(p, os.path.join(dest, nome_file))
-    if mac:
+    if linux:
+        libs = os.path.join(ROOT, "build", "linux-libs")
+        for deb, titolo, lic_n, src in NATIVE_LINUX:
+            cartella = os.path.join(libs, deb)
+            if not os.path.isfile(os.path.join(cartella, "copyright")):
+                continue
+            try:
+                with open(os.path.join(cartella, "versione"), encoding="utf-8") as fh:
+                    versione = fh.read().strip()
+            except OSError:
+                versione = "—"
+            righe.append(f"{titolo} | {versione} (pacchetto Ubuntu {deb}) | {lic_n} | {src}")
+            shutil.copyfile(os.path.join(cartella, "copyright"), os.path.join(dest, f"{deb}-copyright.txt"))
+    if mac or linux:
         righe.append("PyInstaller (programma di avvio dentro l'app) | — | GPL-2.0-or-later con eccezione per il "
                      "programma di avvio | https://github.com/pyinstaller/pyinstaller")
-    righe += ["", "Le librerie Qt restano file separati: si possono sostituire con una versione compatibile "
-                  "(LGPL-3.0, sezione 4)."]
-    with open(os.path.join(dest, "COMPONENTI.txt"), "w", encoding="utf-8", newline="\r\n" if not mac else "\n") as fh:
+    if linux:
+        righe.append("appimagetool (runtime AppImage all'inizio del file) | — | MIT | "
+                     "https://github.com/AppImage/appimagetool e https://github.com/AppImage/type2-runtime")
+        righe += ["", "Usati dal sistema e NON inclusi: xdg-desktop-portal (schermo, mouse e tastiera con Wayland), "
+                      "GStreamer con il modulo PipeWire (fotogrammi dello schermo), il portachiavi (Secret Service)."]
+    if linux:
+        righe += ["", "Le librerie Qt sono dentro il file AppImage (si estrae con «tk-desk-….AppImage "
+                      "--appimage-extract», cartella usr/lib/tk-desk/_internal) e restano file separati: si possono "
+                      "sostituire con una versione compatibile (LGPL-3.0, sezione 4)."]
+    else:
+        righe += ["", "Le librerie Qt restano file separati: si possono sostituire con una versione compatibile "
+                      "(LGPL-3.0, sezione 4)."]
+    with open(os.path.join(dest, "COMPONENTI.txt"), "w", encoding="utf-8",
+              newline="\n" if (mac or linux) else "\r\n") as fh:
         fh.write("\n".join(righe) + "\n")
     return len(os.listdir(dest))
 
 
 if __name__ == "__main__":
     if len(sys.argv) < 2:
-        sys.exit("uso: python tools_licenze.py <cartella> [--mac]")
+        sys.exit("uso: python tools_licenze.py <cartella> [--mac | --linux]")
     sys.path.insert(0, ROOT)
-    n = prepara(sys.argv[1], "--mac" in sys.argv)
+    n = prepara(sys.argv[1], "--mac" in sys.argv, "--linux" in sys.argv)
     print(f"licenze: {n} file in {sys.argv[1]}")

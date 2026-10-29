@@ -6,7 +6,9 @@ del microfono, conta i campioni ricevuti).
 """
 import asyncio
 import fractions
+import os
 import queue
+import sys
 import threading
 import time
 
@@ -25,6 +27,26 @@ def _ricampiona(dati, da, a):
     return np.interp(x, np.arange(len(dati)), dati.astype(np.float32)).astype(np.int16)
 
 
+def prepara_portaudio():
+    """Linux: PortAudio (libportaudio2) non c'è in Ubuntu di base, quindi la libreria è nel pacchetto (presa dal
+    pacchetto Ubuntu, insieme a libjack). sounddevice la cerca con ctypes.util.find_library("portaudio"), che nel
+    pacchetto non la vede: si fa trovare la nostra se il sistema non ne ha una sua. Va chiamata prima di importare
+    sounddevice."""
+    if not sys.platform.startswith("linux") or not getattr(sys, "_MEIPASS", ""):
+        return
+    import ctypes.util
+    lib = os.path.join(sys._MEIPASS, "libportaudio.so.2")
+    if getattr(ctypes.util.find_library, "_tk_portaudio", False) or not os.path.isfile(lib):
+        return
+    originale = ctypes.util.find_library
+
+    def trova(nome):
+        trovata = originale(nome)
+        return trovata if trovata or nome != "portaudio" else lib
+    trova._tk_portaudio = True
+    ctypes.util.find_library = trova
+
+
 class Audio:
     def __init__(self):
         self._mic = None
@@ -40,6 +62,7 @@ class Audio:
         """Apre microfono e altoparlanti. Ritorna "" o la descrizione di cosa non va (la chiamata parte lo stesso)."""
         self.ferma()
         try:
+            prepara_portaudio()
             import sounddevice as sd
         except Exception as exc:
             return f"audio non disponibile ({exc})"

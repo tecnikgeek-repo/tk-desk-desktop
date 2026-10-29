@@ -13,6 +13,7 @@ ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 sys.path.insert(0, ROOT)
 os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 os.environ["TKDESK_DATA"] = tempfile.mkdtemp(prefix="tkdesk-test-")
+os.environ["TKDESK_PORTACHIAVI_SERVIZIO"] = "tk-desk-prova"   # Mac e Linux: mai le voci vere del portachiavi
 
 from PySide6.QtCore import QCoreApplication  # noqa: E402
 
@@ -88,8 +89,82 @@ def aspetta_che(cond, timeout=10):
     return False
 
 
+class PortaleFinto:
+    """Al posto del portale RemoteDesktop di Wayland: registra le chiamate."""
+    pronto = True
+    remoto = True
+
+    def __init__(self):
+        self.chiamate = []
+
+    def muovi(self, nodo, x, y):
+        self.chiamate.append(("muovi", nodo, round(x), round(y)))
+
+    def pulsante(self, codice, giu):
+        self.chiamate.append(("pulsante", codice, giu))
+
+    def rotella(self, asse, scatti):
+        self.chiamate.append(("rotella", asse, scatti))
+
+    def tasto(self, keysym, giu):
+        self.chiamate.append(("tasto", keysym, giu))
+
+
+def prove_wayland():
+    """Linux con Wayland: traduzione dei comandi per il portale (vale su ogni sistema: niente D-Bus) e lettura dei
+    fotogrammi con GStreamer (solo se gst-launch-1.0 c'è)."""
+    from tkdesk import portale
+
+    def tasti():
+        assert portale.keysym_tasto("ctrl") == 0xffe3 and portale.keysym_tasto("meta") == 0xffeb
+        assert portale.keysym_tasto("f5") == 0xffc2 and portale.keysym_tasto("enter") == 0xff0d
+        assert portale.keysym_tasto("c") == ord("c") and portale.keysym_tasto("nessuno") is None
+        assert portale.keysym_carattere("à") == 0xe0 and portale.keysym_carattere("€") == 0x20ac
+        assert portale.keysym_carattere("ж") == 0x01000000 + ord("ж")
+    prova("Wayland: nomi dei tasti e caratteri → keysym", tasti)
+
+    def esecutore():
+        p = PortaleFinto()
+        es = Esecutore(portale=p)
+        assert es.wayland
+        es.schermo = {"left": 1920, "top": 0, "width": 1001, "height": 501, "nodo": 47}
+        es.esegui({"t": "mm", "x": 0.5, "y": 1.5})
+        es.esegui({"t": "mb", "b": "r", "d": 1, "x": 0, "y": 0})
+        es.esegui({"t": "mw", "dx": 0, "dy": 2})
+        es.esegui({"t": "k", "k": "ctrl", "d": 1})
+        es.esegui({"t": "k", "k": "c", "d": 1})
+        es.esegui({"t": "c", "c": "Aè"})
+        assert p.chiamate[:6] == [("muovi", 47, 500, 500), ("muovi", 47, 0, 0), ("pulsante", 0x111, True),
+                                  ("rotella", 0, -2), ("tasto", 0xffe3, True), ("tasto", ord("c"), True)], p.chiamate
+        assert p.chiamate[6:] == [("tasto", 0x41, True), ("tasto", 0x41, False), ("tasto", 0xe8, True),
+                                  ("tasto", 0xe8, False)], p.chiamate[6:]
+        p.chiamate.clear()
+        es.rilascia_tutto()
+        assert sorted(p.chiamate) == sorted([("tasto", 0xffe3, False), ("tasto", ord("c"), False),
+                                             ("pulsante", 0x111, False)]), p.chiamate
+        p.pronto = False      # permesso non ancora dato: i comandi si scartano
+        p.chiamate.clear()
+        es.esegui({"t": "mm", "x": 0.1, "y": 0.1})
+        assert p.chiamate == []
+    prova("Wayland: mouse, rotella e tastiera tradotti per il portale RemoteDesktop", esecutore)
+
+    if sys.platform.startswith("linux") and portale.gst_launch():
+        def gst():
+            lettore = portale.LettoreGst(["videotestsrc", "is-live=true"], 320, 240)
+            try:
+                assert aspetta_che(lambda: lettore.contati >= 3, 15), f"nessun fotogramma: {lettore.errore}"
+                assert lettore.ultimo.shape == (240, 320, 4), lettore.ultimo.shape
+                assert lettore.ultimo[:, :, :3].any(), "fotogramma tutto nero"
+            finally:
+                lettore.ferma()
+        prova("Wayland: fotogrammi BGRx letti da gst-launch-1.0 (video di prova)", gst)
+    else:
+        print("  --  GStreamer non disponibile qui: prova dei fotogrammi saltata", flush=True)
+
+
 def main():
     app = QCoreApplication(sys.argv)  # noqa: F841
+    prove_wayland()
     esec = Esecutore(finto=True)
     au_h, au_c = AudioFinto(), AudioFinto()
     host = sessione.Motore(Imp(), sorgente_factory=SorgenteFinta, esecutore=esec, centralino=CentralinoFinto(None), audio=au_h)
@@ -523,6 +598,12 @@ def main():
 
     host.ferma()
     ctrl.ferma()
+    if util.IS_LINUX:
+        try:
+            from tkdesk import tk_linux
+            tk_linux.cancella_servizio(util.SERVIZIO_PORTACHIAVI)   # voci di prova nel portachiavi
+        except Exception:
+            pass
     print("TUTTO OK" if not FALLITI else f"FALLITE: {FALLITI}", flush=True)
     os._exit(1 if FALLITI else 0)
 

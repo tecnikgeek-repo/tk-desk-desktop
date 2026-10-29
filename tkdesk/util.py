@@ -1,12 +1,16 @@
+"""Percorsi, impostazioni, segreti e piccole utilità di sistema (Windows, Mac e Linux)."""
 import json
 import os
 import sys
 
 from tkdesk import APP_TITLE, VERSION
+from tkdesk import tk_linux  # libreria comune dei software TK (su Windows e Mac non fa niente)
 
 APP_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 IS_MAC = sys.platform == "darwin"
 IS_WIN = sys.platform == "win32"
+IS_LINUX = sys.platform.startswith("linux")
+LINUX_DESKTOP_ID = "tk-desk"   # nome del file .desktop = app_id della finestra su Wayland (icona nella barra)
 
 
 def mac_bundle_path():
@@ -18,9 +22,12 @@ def mac_bundle_path():
 
 
 def is_installed():
-    """True se gira dal pacchetto portatile (Windows: cartella «app» con il Python incluso; Mac: bundle .app)."""
+    """True se gira dal pacchetto portatile (Windows: cartella «app» con il Python incluso; Mac: bundle .app;
+    Linux: file AppImage)."""
     if IS_MAC:
         return bool(getattr(sys, "frozen", False) and mac_bundle_path())
+    if IS_LINUX:
+        return bool(tk_linux.appimage_path())
     bundled = os.path.join(APP_ROOT, "python")
     return os.path.isfile(os.path.join(bundled, "pythonw.exe")) and \
         os.path.normcase(os.path.abspath(sys.base_prefix)) == os.path.normcase(bundled)
@@ -39,11 +46,13 @@ def _writable_dir(path):
 
 def data_dir():
     """Impostazioni e rubrica. Windows: «Dati» accanto ad «app» (portatile). Mac: Application Support.
-    Gli aggiornamenti non la toccano. TKDESK_DATA la sostituisce (test)."""
+    Linux: ~/.local/share/tk-desk. Gli aggiornamenti non la toccano. TKDESK_DATA la sostituisce (test)."""
     if os.environ.get("TKDESK_DATA"):
         path = os.environ["TKDESK_DATA"]
     elif IS_MAC:
         path = os.path.join(os.path.expanduser("~"), "Library", "Application Support", APP_TITLE)
+    elif IS_LINUX:
+        path = tk_linux.cartella_dati(APP_TITLE)
     else:
         base = os.path.dirname(APP_ROOT) if is_installed() else APP_ROOT
         path = os.path.join(base, "Dati")
@@ -57,10 +66,30 @@ def log_dir():
     return data_dir()
 
 
+def cartella_utente(chiave, riserva):
+    """Cartelle dell'utente. Linux: quelle di ~/.config/user-dirs.dirs (in italiano «Scrivania», «Scaricati»,
+    «Video», «Documenti»), chiave = DESKTOP, DOWNLOAD, VIDEOS, DOCUMENTS. Altrove (o se manca): ~/<riserva>.
+    "" se non esiste."""
+    casa = os.path.expanduser("~")
+    if IS_LINUX and chiave:
+        conf = os.environ.get("XDG_CONFIG_HOME") or os.path.join(casa, ".config")
+        try:
+            with open(os.path.join(conf, "user-dirs.dirs"), "r", encoding="utf-8") as fh:
+                for riga in fh:
+                    riga = riga.strip()
+                    if riga.startswith(f"XDG_{chiave}_DIR="):
+                        valore = riga.split("=", 1)[1].strip().strip('"').replace("$HOME", casa)
+                        if os.path.isdir(valore) and os.path.abspath(valore) != os.path.abspath(casa):
+                            return valore
+        except OSError:
+            pass
+    path = os.path.join(casa, riserva)
+    return path if os.path.isdir(path) else ""
+
+
 def export_dir():
     """Dove proporre il salvataggio delle esportazioni."""
-    docs = os.path.join(os.path.expanduser("~"), "Documents")
-    return docs if os.path.isdir(docs) else os.path.expanduser("~")
+    return cartella_utente("DOCUMENTS", "Documents") or os.path.expanduser("~")
 
 
 def open_path(path):
@@ -70,7 +99,7 @@ def open_path(path):
     elif IS_MAC:
         subprocess.Popen(["open", path])
     else:
-        subprocess.Popen(["xdg-open", path])
+        tk_linux.apri(path)
 
 
 def human_size(n):
@@ -160,9 +189,7 @@ def _shell_folder(csidl):
 
 def downloads_dir():
     """Dove salvare i file ricevuti dall'altro computer: Download/tk-desk."""
-    base = os.path.join(os.path.expanduser("~"), "Downloads")
-    if not os.path.isdir(base):
-        base = os.path.expanduser("~")
+    base = cartella_utente("DOWNLOAD", "Downloads") or os.path.expanduser("~")
     path = os.path.join(base, APP_TITLE)
     os.makedirs(path, exist_ok=True)
     return path
@@ -171,7 +198,7 @@ def downloads_dir():
 def cartella_ricevuti():
     """File ricevuti dall'altro computer: sulla Scrivania (passaggio da desktop a desktop); di riserva Download/tk-desk."""
     try:
-        cartella = _shell_folder(0x10) if IS_WIN else os.path.join(os.path.expanduser("~"), "Desktop")
+        cartella = _shell_folder(0x10) if IS_WIN else cartella_utente("DESKTOP", "Desktop")
         if cartella and os.path.isdir(cartella) and _writable_dir(cartella):
             return cartella
     except Exception:
@@ -200,7 +227,8 @@ def pulisci_in_arrivo():
 
 def segna_come_scaricato(percorso):
     """Un file arrivato da un altro computer è trattato come scaricato da internet: Windows lo apre con l'avviso
-    di sicurezza (Mark-of-the-Web, ZoneId=3), il Mac con la quarantena di Gatekeeper."""
+    di sicurezza (Mark-of-the-Web, ZoneId=3), il Mac con la quarantena di Gatekeeper. Linux non ha un segno
+    così: il file arriva senza il permesso di esecuzione, quindi un programma non parte con un doppio clic."""
     try:
         if IS_WIN:
             with open(percorso + ":Zone.Identifier", "w", encoding="ascii") as fh:
@@ -215,8 +243,8 @@ def segna_come_scaricato(percorso):
 
 
 def cartella_licenze():
-    """Testi delle licenze del pacchetto: Windows app\\licenze (accanto a run.py), Mac Contents/Resources/licenze;
-    da sorgente la cartella licenze del progetto."""
+    """Testi delle licenze del pacchetto: Windows app\\licenze (accanto a run.py), Mac Contents/Resources/licenze,
+    Linux _internal/licenze dentro l'AppImage; da sorgente la cartella licenze del progetto."""
     candidati = [os.path.join(APP_ROOT, "licenze")]
     if getattr(sys, "_MEIPASS", ""):
         candidati.append(os.path.join(sys._MEIPASS, "licenze"))
@@ -232,8 +260,10 @@ def cartella_licenze():
 # ───────────────────────────────────────────── segreti (chiave della password fissa, password della rubrica)
 # Windows: DPAPI dell'utente («dpapi:…», si legge solo da questo utente su questo computer).
 # Mac: Portachiavi («portachiavi:<nome>», il segreto passa a `security` dallo stdin, mai come argomento).
-# Se nessuno dei due funziona il valore resta com'era (esadecimale), come nelle versioni di prima.
-SERVIZIO_PORTACHIAVI = "tk-desk"
+# Linux: portachiavi del sistema via Secret Service (stesso «portachiavi:<nome>», voce service=tk-desk,
+# account=<nome>; GNOME «Password e chiavi», KDE Wallet…), con secretstorage incluso nel pacchetto.
+# Se nessuno funziona il valore resta com'era (esadecimale), come nelle versioni di prima.
+SERVIZIO_PORTACHIAVI = os.environ.get("TKDESK_PORTACHIAVI_SERVIZIO", "tk-desk")   # i test usano un nome loro
 
 
 def _dpapi(dati, cifra):
@@ -281,6 +311,10 @@ def proteggi(valore, nome):
             _portachiavi(f"add-generic-password -U -a {nome} -s {SERVIZIO_PORTACHIAVI} -w {valore}")
             if _portachiavi_leggi(nome) == valore:
                 return "portachiavi:" + nome
+        if IS_LINUX and nome:
+            tk_linux.scrivi_segreto(SERVIZIO_PORTACHIAVI, nome, valore.encode("utf-8"), f"tk-desk: {nome}")
+            if tk_linux.leggi_segreto(SERVIZIO_PORTACHIAVI, nome) == valore.encode("utf-8"):
+                return "portachiavi:" + nome
     except Exception as exc:
         print("tk-desk: segreto non protetto:", exc)
     return valore
@@ -294,6 +328,8 @@ def svela(salvato):
             import base64
             return _dpapi(base64.b64decode(salvato[6:]), False).decode("ascii") if IS_WIN else ""
         if salvato.startswith("portachiavi:"):
+            if IS_LINUX:
+                return (tk_linux.leggi_segreto(SERVIZIO_PORTACHIAVI, salvato[12:]) or b"").decode("utf-8", "replace")
             return _portachiavi_leggi(salvato[12:]) if IS_MAC else ""
     except Exception as exc:
         print("tk-desk: segreto non leggibile:", exc)
@@ -306,8 +342,11 @@ def protetto(salvato):
 
 
 def dimentica(salvato):
-    """Toglie la voce dal Portachiavi (Mac). Con DPAPI basta cancellare il testo."""
+    """Toglie la voce dal Portachiavi (Mac) o dal portachiavi di Linux. Con DPAPI basta cancellare il testo."""
     salvato = str(salvato or "")
+    if IS_LINUX and salvato.startswith("portachiavi:"):
+        tk_linux.cancella_segreto(SERVIZIO_PORTACHIAVI, salvato[12:])
+        return
     if IS_MAC and salvato.startswith("portachiavi:"):
         try:
             import subprocess
@@ -317,9 +356,10 @@ def dimentica(salvato):
             pass
 
 
-def cancella_tutto_mac(impostazioni):
-    """Mac (non c'è un disinstallatore): toglie l'avvio automatico (LaunchAgent), le voci nel Portachiavi e la
-    cartella dei dati (impostazioni, rubrica, licenza). Il programma va chiuso subito dopo."""
+def cancella_tutto(impostazioni):
+    """Mac e Linux (non c'è un disinstallatore): toglie l'avvio automatico (LaunchAgent / autostart), le voci nel
+    portachiavi, la cartella dei dati (impostazioni, rubrica, licenza) e su Linux la voce nel menu.
+    Il programma va chiuso subito dopo."""
     import shutil
     try:
         avvio_automatico(False)
@@ -328,14 +368,19 @@ def cancella_tutto_mac(impostazioni):
     voci = [impostazioni.value("chiave_fissa", "")] + [v.get("chiave", "") for v in (impostazioni.value("rubrica", []) or [])]
     for v in voci:
         dimentica(v)
+    if IS_LINUX:
+        togli_menu_linux()
     shutil.rmtree(data_dir(), ignore_errors=True)
+
+
+cancella_tutto_mac = cancella_tutto   # nome di prima
 
 
 def videos_dir():
     """Dove salvare le registrazioni delle sessioni: Video/tk-desk (Filmati su Mac)."""
-    for nome in ("Videos", "Movies", "Documents"):
-        base = os.path.join(os.path.expanduser("~"), nome)
-        if os.path.isdir(base):
+    for chiave, nome in (("VIDEOS", "Videos"), ("", "Movies"), ("DOCUMENTS", "Documents")):
+        base = cartella_utente(chiave, nome)
+        if base:
             break
     else:
         base = os.path.expanduser("~")
@@ -346,7 +391,10 @@ def videos_dir():
 
 def avvio_automatico(acceso=None):
     """Avvio insieme al computer (accesso non presidiato). Senza argomento dice se è attivo.
-    Windows: collegamento nella cartella Esecuzione automatica; Mac: LaunchAgent nell'utente."""
+    Windows: collegamento nella cartella Esecuzione automatica; Mac: LaunchAgent nell'utente;
+    Linux: ~/.config/autostart/tk-desk.desktop che avvia il file AppImage."""
+    if IS_LINUX:
+        return _avvio_linux(acceso)
     if IS_WIN:
         cartella = os.path.join(os.environ.get("APPDATA", ""), "Microsoft", "Windows", "Start Menu", "Programs", "Startup")
         lnk = os.path.join(cartella, f"{APP_TITLE}.lnk")
@@ -379,6 +427,70 @@ def avvio_automatico(acceso=None):
             os.remove(plist)
         return acceso
     raise RuntimeError("non disponibile su questo sistema")
+
+
+def _desktop_exec(path):
+    """Percorso tra virgolette per la riga Exec di un file .desktop (specifica freedesktop)."""
+    for c in ("\\", '"', "`", "$"):
+        path = path.replace(c, "\\" + c)
+    return f'"{path}"'
+
+
+def _file_avvio_linux():
+    conf = os.environ.get("XDG_CONFIG_HOME") or os.path.join(os.path.expanduser("~"), ".config")
+    return os.path.join(conf, "autostart", f"{LINUX_DESKTOP_ID}.desktop")
+
+
+def _avvio_linux(acceso):
+    path = _file_avvio_linux()
+    if acceso is None:
+        return os.path.isfile(path)
+    if acceso:
+        appimage = tk_linux.appimage_path()
+        if not appimage:
+            raise RuntimeError("disponibile solo con il file AppImage di tk-desk")
+        testo = "\n".join([
+            "[Desktop Entry]", "Type=Application", f"Name={APP_TITLE}",
+            "Comment=Accesso non presidiato di tk-desk (resta vicino all'orologio)",
+            f"Exec={_desktop_exec(appimage)} --in-sottofondo", f"TryExec={appimage}", f"Icon={LINUX_DESKTOP_ID}",
+            "Terminal=false", "X-GNOME-Autostart-enabled=true", "X-GNOME-Autostart-Delay=5", "X-TecnikGeek=1",
+        ]) + "\n"
+        try:
+            with open(path, "r", encoding="utf-8") as fh:
+                if fh.read() == testo:
+                    return True
+        except OSError:
+            pass
+        os.makedirs(os.path.dirname(path), exist_ok=True)
+        with open(path + ".tmp", "w", encoding="utf-8") as fh:
+            fh.write(testo)
+        os.replace(path + ".tmp", path)
+    elif os.path.isfile(path):
+        os.remove(path)
+    return acceso
+
+
+def installa_menu_linux():
+    """Linux: voce «tk-desk» nel menu delle applicazioni con l'icona; se l'avvio automatico è acceso lo si
+    riallinea al file AppImage (spostato o aggiornato con un nome nuovo)."""
+    icona = os.path.join(getattr(sys, "_MEIPASS", APP_ROOT), "assets", "tk-desk-512.png")
+    fatto = tk_linux.installa_menu(LINUX_DESKTOP_ID, APP_TITLE, "Assistenza remota: schermo, mouse, tastiera, file e "
+                                   "chat (TecnikGeek)", "Network;RemoteAccess;", icona,
+                                   nome_generico="Assistenza remota", parole="assistenza;remoto;desktop;controllo;")
+    if _avvio_linux(None):
+        _avvio_linux(True)
+    return fatto
+
+
+def togli_menu_linux():
+    """Contrario di installa_menu_linux (per «Cancella tutto»)."""
+    base = tk_linux.xdg_data_home()
+    for p in (os.path.join(base, "applications", f"{LINUX_DESKTOP_ID}.desktop"),
+              os.path.join(base, "icons", "hicolor", "512x512", "apps", f"{LINUX_DESKTOP_ID}.png")):
+        try:
+            os.remove(p)
+        except OSError:
+            pass
 
 
 def mac_permessi(chiedi=False):
@@ -444,6 +556,8 @@ def riavvia():
     bundle = mac_bundle_path() if IS_MAC else None
     if bundle:
         subprocess.Popen(["/bin/sh", "-c", f'sleep 1; open -n "{bundle}"'], start_new_session=True)
+    elif IS_LINUX and tk_linux.appimage_path():
+        tk_linux.avvia(["/bin/sh", "-c", 'sleep 1; exec "$0"', tk_linux.appimage_path()])
     elif IS_WIN and is_installed():
         subprocess.Popen([os.path.join(APP_ROOT, "python", "pythonw.exe"), os.path.join(APP_ROOT, "run.py")],
                          creationflags=0x00000008)
@@ -459,7 +573,8 @@ def apri_impostazioni_mac(quale):
 def nascondi_dalla_cattura(widget):
     """La finestra resta visibile a chi è davanti al computer ma non compare nello schermo trasmesso
     (chat, barra «sei controllato», domande di tk-desk). Windows 10 2004+: WDA_EXCLUDEFROMCAPTURE;
-    Mac: NSWindow.sharingType = NSWindowSharingNone."""
+    Mac: NSWindow.sharingType = NSWindowSharingNone. Linux: né X11 né Wayland hanno un modo per escludere una
+    finestra dalla cattura (sul portale decide il compositore): non si fa niente e le finestre si vedono."""
     try:
         import ctypes
         wid = int(widget.winId())
@@ -483,11 +598,14 @@ def nascondi_dalla_cattura(widget):
 class Veglia:
     """Mentre qualcuno controlla questo computer: niente salvaschermo, schermo spento o stop.
     Windows: SetThreadExecutionState (dal thread della finestra). Mac: caffeinate per la durata della sessione
-    e ogni 30 secondi «utente attivo» (i comandi simulati non sempre azzerano il conto del salvaschermo)."""
+    e ogni 30 secondi «utente attivo» (i comandi simulati non sempre azzerano il conto del salvaschermo).
+    Linux: inibizione via D-Bus (org.gnome.SessionManager.Inhibit, altrimenti org.freedesktop.ScreenSaver),
+    che vale finché resta aperta la nostra connessione al bus."""
 
     def __init__(self):
         self._proc = None
         self.attiva = False
+        self._dbus = None             # Linux: (connessione, voce, cookie)
 
     def accendi(self):
         self.attiva = True
@@ -499,6 +617,8 @@ class Veglia:
                 import subprocess
                 self._proc = subprocess.Popen(["/usr/bin/caffeinate", "-d", "-i", "-s"],
                                               stdin=subprocess.DEVNULL, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+            elif IS_LINUX and self._dbus is None:
+                self._dbus = inibisci_linux("Assistenza remota in corso")
             self.sveglia()
         except Exception:
             pass
@@ -526,6 +646,51 @@ class Veglia:
                 ctypes.windll.kernel32.SetThreadExecutionState(0x80000000)
             if self._proc is not None:
                 self._proc.terminate()
+            if self._dbus is not None:
+                togli_inibizione_linux(self._dbus)
         except Exception:
             pass
         self._proc = None
+        self._dbus = None
+
+
+_INIBIZIONI = (
+    # (percorso, servizio = interfaccia, metodo, firma, argomenti(motivo), metodo per togliere)
+    ("/org/gnome/SessionManager", "org.gnome.SessionManager", "Inhibit", "susu",
+     lambda motivo: (APP_TITLE, 0, motivo, 4 | 8), "Uninhibit"),          # 4 = sospensione, 8 = inattività
+    ("/org/freedesktop/ScreenSaver", "org.freedesktop.ScreenSaver", "Inhibit", "ss",
+     lambda motivo: (APP_TITLE, motivo), "UnInhibit"),
+)
+
+
+def inibisci_linux(motivo):
+    """Linux: niente salvaschermo, blocco o sospensione finché non si chiama togli_inibizione_linux().
+    Ritorna (connessione, voce, cookie) oppure None se il desktop non lo permette."""
+    from jeepney import DBusAddress, new_method_call
+    from jeepney.io.blocking import open_dbus_connection
+    from jeepney.wrappers import unwrap_msg
+    conn = open_dbus_connection(bus="SESSION")
+    for voce in _INIBIZIONI:
+        percorso, servizio, metodo, firma, argomenti, _togli = voce
+        try:
+            msg = new_method_call(DBusAddress(percorso, bus_name=servizio, interface=servizio), metodo, firma,
+                                  argomenti(motivo))
+            cookie = unwrap_msg(conn.send_and_get_reply(msg, timeout=5))[0]
+            return conn, voce, cookie
+        except Exception:
+            continue
+    conn.close()
+    return None
+
+
+def togli_inibizione_linux(stato):
+    from jeepney import DBusAddress, new_method_call
+    conn, voce, cookie = stato
+    try:
+        percorso, servizio, _m, _f, _a, togli = voce
+        conn.send_and_get_reply(new_method_call(DBusAddress(percorso, bus_name=servizio, interface=servizio),
+                                                togli, "u", (int(cookie),)), timeout=5)
+    except Exception:
+        pass
+    finally:
+        conn.close()

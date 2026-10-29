@@ -196,6 +196,7 @@ class Segnali(QObject):
     registrazione = Signal(str, str)              # chiave, percorso del video (vuoto = finita)
     # Mac: mouse e tastiera vanno usati SOLO dal thread principale (pynput fuori dal thread principale fa
     # chiudere l'app su macOS 14+). Il motore manda qui i comandi e la finestra li esegue.
+    # Linux no: pynput con X11 e il portale con Wayland vanno bene da qualsiasi thread.
     comando = Signal(dict, dict)                  # comando, schermo condiviso
     voce_chiesta = Signal(str)                    # chiave/id: l'altro vuole parlare
     voce_stato = Signal(str, str, str)            # chiave/id, "attiva"|"chiusa"|"rifiutata", avviso audio
@@ -625,6 +626,7 @@ class Motore:
         sess.sorgente = (self._sorgente_factory or _sorgente_vera)()
         sess.esecutore = self._esecutore or (None if self.su_principale else Esecutore())
         self._entrate[da] = sess
+        self._collega_sorgente(sess)
 
         @pc.on("datachannel")
         def _canale(canale):
@@ -636,6 +638,8 @@ class Motore:
 
             def _via():
                 self._manda(sess, self._info_schermi(sess))
+                if getattr(sess.sorgente, "errore", ""):
+                    self._manda(sess, {"t": "avviso", "s": f"Schermo non disponibile: {sess.sorgente.errore}"[:300]})
                 self.s.controllato_inizio.emit(da, sess.info.get("nome", ""))
                 asyncio.ensure_future(self._manda_cursore(sess))
             if canale.readyState == "open":
@@ -673,6 +677,26 @@ class Motore:
             if sess.canale is None and not sess.chiusa:
                 await self._chiudi(sess, "collegamento non riuscito", avvisa=False)
         asyncio.ensure_future(_scadenza())
+
+    def _collega_sorgente(self, sess):
+        """Sorgenti che diventano pronte dopo (Linux con Wayland: il portale del desktop chiede il permesso a chi
+        è davanti): quando lo sono si rimanda l'elenco degli schermi, i problemi vanno a chi controlla."""
+        src = sess.sorgente
+        if not hasattr(src, "avvia"):
+            return
+
+        def nel_ciclo(fn):
+            try:
+                self.loop.call_soon_threadsafe(lambda: None if sess.chiusa else fn())
+            except RuntimeError:
+                pass   # motore già fermo
+
+        def problema(testo):
+            _diagnosi(f"schermo: {testo}")
+            nel_ciclo(lambda: self._manda(sess, {"t": "avviso", "s": str(testo)[:300]}))
+        src.al_cambio = lambda: nel_ciclo(lambda: self._manda(sess, self._info_schermi(sess)))
+        src.al_problema = problema
+        src.avvia()
 
     async def _manda_cursore(self, sess):
         """La cattura dello schermo non contiene il puntatore: se ne manda la posizione 25 volte al secondo."""
@@ -1232,5 +1256,5 @@ class Motore:
 
 
 def _sorgente_vera():
-    from tkdesk.schermo import SorgenteSchermo
-    return SorgenteSchermo()
+    from tkdesk.schermo import crea_sorgente
+    return crea_sorgente()

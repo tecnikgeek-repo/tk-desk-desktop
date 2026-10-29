@@ -22,8 +22,8 @@ from tkdesk.kit import (
 from tkdesk.sessione import ATTESA_CONFERMA, Motore
 from tkdesk.tk_licenza_qt import dentro_lo_schermo, testata_compatta
 from tkdesk.util import (
-    IS_MAC, IS_WIN, Settings, Veglia, avvio_automatico, human_size, is_installed, log_dir, nascondi_dalla_cattura, open_path,
-    videos_dir,
+    IS_LINUX, IS_MAC, IS_WIN, Settings, Veglia, avvio_automatico, human_size, is_installed, log_dir,
+    nascondi_dalla_cattura, open_path, videos_dir,
 )
 
 BLOCCATO = ("Mentre qualcuno controlla questo computer non si può attivare l'accesso non presidiato, la password "
@@ -31,7 +31,7 @@ BLOCCATO = ("Mentre qualcuno controlla questo computer non si può attivare l'ac
 
 STYLE_DESK = STYLE + f"""
 QLabel#bigid {{ font-size:34px; font-weight:800; color:{NAVY}; letter-spacing:1px; }}
-QLabel#bigpw {{ font-size:26px; font-weight:800; color:{NAVY}; font-family:Consolas, Menlo, monospace; letter-spacing:3px; }}
+QLabel#bigpw {{ font-size:26px; font-weight:800; color:{NAVY}; font-family:Consolas, Menlo, 'DejaVu Sans Mono', monospace; letter-spacing:3px; }}
 QLabel#pill {{ border-radius:10px; padding:3px 10px; font-size:11px; font-weight:800; color:#fff; }}
 QFrame#pwbox {{ background:{ACCENT_L}; border-radius:12px; }}
 QFrame#idbox {{ background:#f8fafc; border:1px solid {GRAY_200}; border-radius:12px; }}
@@ -894,7 +894,7 @@ class NonPresidiato(TkDialog):
 
 class Rubrica(TkDialog):
     """Rubrica dei computer: nome, ID, acceso/spento, collegamento con un clic. La password fissa non si salva:
-    si salva la chiave ricavata, cifrata (DPAPI su Windows, Portachiavi sul Mac)."""
+    si salva la chiave ricavata, cifrata (DPAPI su Windows, Portachiavi sul Mac, portachiavi del sistema su Linux)."""
 
     def __init__(self, win):
         super().__init__(win, 560)
@@ -1016,7 +1016,7 @@ class Rubrica(TkDialog):
 
 
 class Impostazioni(TkDialog):
-    """Nome del computer, appunti condivisi, statistiche, accesso non presidiato (Mac: cancella tutto)."""
+    """Nome del computer, appunti condivisi, statistiche, accesso non presidiato (Mac e Linux: cancella tutto)."""
 
     def __init__(self, win):
         super().__init__(win, 500)
@@ -1056,7 +1056,7 @@ class Impostazioni(TkDialog):
         self.body.addWidget(card2)
         riga = QHBoxLayout()
         riga.addWidget(text_btn("key", "Accesso non presidiato", self._non_presidiato, "#fff", "ghost"))
-        if IS_MAC:
+        if IS_MAC or IS_LINUX:
             riga.addWidget(text_btn("trash", "Cancella tutto e togli l'avvio automatico", self._cancella, "#fca5a5",
                                     "ghost"))
         riga.addStretch(1)
@@ -1077,15 +1077,19 @@ class Impostazioni(TkDialog):
         self.win._non_presidiato()
 
     def _cancella(self):
-        scelta = tk_choice(self, "Cancella tutto", "Tolgo l'avvio automatico, la password fissa, la rubrica, le "
-                                                  "impostazioni e i dati di tk-desk da questo Mac, poi chiudo "
-                                                  "tk-desk. Per finire trascina tk-desk dalle Applicazioni al Cestino.",
-                           [("Annulla", "ghost"), ("Cancella tutto", "accent")], "warn")
+        if IS_LINUX:
+            testo = ("Tolgo l'avvio automatico, la password fissa, la rubrica, le impostazioni, i dati di tk-desk e la "
+                     "voce nel menu delle applicazioni da questo computer, poi chiudo tk-desk. Per finire cancella il "
+                     "file AppImage di tk-desk.")
+        else:
+            testo = ("Tolgo l'avvio automatico, la password fissa, la rubrica, le impostazioni e i dati di tk-desk da "
+                     "questo Mac, poi chiudo tk-desk. Per finire trascina tk-desk dalle Applicazioni al Cestino.")
+        scelta = tk_choice(self, "Cancella tutto", testo, [("Annulla", "ghost"), ("Cancella tutto", "accent")], "warn")
         if scelta != 1:
             return
         if self.win.motore.sessioni_entrata():
             self.win._termina_controllo()
-        util.cancella_tutto_mac(self.win.settings)
+        util.cancella_tutto(self.win.settings)
         self.win.settings.path = ""   # da qui in poi niente più scritture (la cartella dei dati non c'è più)
         self.accept()
         self.win.uscita = True
@@ -1711,6 +1715,15 @@ class Principale(QMainWindow):
     # ---- informazioni e aggiornamenti (come negli altri software TK)
     def ensure_shortcut(self):
         from tkdesk.util import APP_ROOT, ensure_folder_shortcut
+        if IS_LINUX and is_installed():
+            # voce nel menu delle applicazioni con l'icona (si corregge da sola se il file AppImage è stato spostato)
+            def menu():
+                try:
+                    util.installa_menu_linux()
+                except Exception as exc:
+                    print("tk-desk: voce nel menu non creata:", exc)
+            threading.Thread(target=menu, daemon=True).start()
+            return
         if not IS_WIN or not is_installed() or self.settings.value("lnk_root", "") == APP_ROOT:
             return
 
@@ -1871,6 +1884,9 @@ def cli_update_test(argv):
             write("nessun aggiornamento")
             return 0
         asset = updater.asset_for(m)
+        if asset is None:
+            write(f"aggiornamento rifiutato: nessun file firmato valido per {updater.platform_key()}")
+            return 2
         dest = os.path.join(updater.download_dir(), os.path.basename(asset["url"].split("?")[0]))
         updater.download(asset["url"], dest, asset.get("sha256"))
         write(f"scaricato e verificato: {dest}")
@@ -1906,6 +1922,10 @@ def _selftest(app, settings, shot):
            "| Esci:", QApplication.translate("MAC_APPLICATION_MENU", "Quit %1"))
     from tkdesk.schermo import posizione_puntatore
     scrivi("puntatore:", posizione_puntatore())
+    if IS_LINUX:
+        from tkdesk.portale import e_wayland, gst_launch
+        scrivi("linux: sessione", os.environ.get("XDG_SESSION_TYPE", "?"), "| wayland:", e_wayland(),
+               "| gst-launch:", gst_launch() or "no", "| AppImage:", is_installed())
     try:
         import HIServices
         import Quartz
@@ -1970,6 +1990,11 @@ def main():
     argv = sys.argv[1:]
     if "--update-test" in argv:
         sys.exit(cli_update_test(argv))
+    if IS_LINUX and any(a.startswith("--prova-") for a in argv):
+        from tkdesk.prove_linux import esegui
+        codice = esegui(argv)
+        if codice is not None:
+            sys.exit(codice)
     selftest = argv[argv.index("--selftest") + 1] if "--selftest" in argv else ""
     try:
         import faulthandler
@@ -1986,6 +2011,8 @@ def main():
     app.setQuitOnLastWindowClosed(False)   # le sessioni e la barra sono finestre a sé: si esce solo da Principale
     app.licenza = pro.crea_licenza(VERSION)
     app.setApplicationName(APP_TITLE)
+    if IS_LINUX:
+        app.setDesktopFileName(util.LINUX_DESKTOP_ID)   # Wayland: la barra delle applicazioni trova l'icona dal .desktop
     app.setStyle("Fusion")
     from tkdesk.tk_licenza_qt import stile_caselle_globale
     app.setStyleSheet(STYLE_DESK + stile_caselle_globale())

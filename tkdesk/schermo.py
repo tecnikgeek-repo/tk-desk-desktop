@@ -1,6 +1,8 @@
 """Cattura dello schermo per la sessione: schermi disponibili e fotogrammi da mandare in WebRTC.
 
 La cattura vera (mss) gira in un thread suo: la libreria non va usata da più thread insieme.
+Linux: con X11 vale lo stesso (mss); con Wayland mss vede solo nero e si passa dal portale del desktop
+(portale.SorgenteWayland): crea_sorgente() sceglie quella giusta.
 `SorgenteFinta` disegna uno schermo di prova: serve ai test e al selftest del pacchetto, che girano
 anche dove non c'è un desktop da catturare.
 """
@@ -62,11 +64,42 @@ class SorgenteSchermo:
         return (x, y) if 0 <= x <= 1 and 0 <= y <= 1 else None
 
 
+def crea_sorgente():
+    """Sorgente dello schermo vero per una sessione in entrata."""
+    from tkdesk.portale import SorgenteWayland, e_wayland
+    if e_wayland():
+        return SorgenteWayland()
+    return SorgenteSchermo()
+
+
+_X11 = {"display": None, "lock": threading.Lock()}
+
+
+def _puntatore_x11():
+    """Linux con X11: posizione del puntatore dalla radice dello schermo (python-xlib, nel pacchetto)."""
+    with _X11["lock"]:
+        if _X11["display"] is None:
+            from Xlib import display
+            _X11["display"] = display.Display()
+        r = _X11["display"].screen().root.query_pointer()
+        return r.root_x, r.root_y
+
+
 def posizione_puntatore():
-    """Puntatore nelle stesse unità di mss: pixel su Windows (il processo è DPI-aware), punti su Mac."""
+    """Puntatore nelle stesse unità di mss: pixel su Windows (il processo è DPI-aware) e su Linux X11, punti su Mac.
+    Linux Wayland: None (il puntatore è già nel video del portale)."""
     import ctypes
     import sys
     try:
+        if sys.platform.startswith("linux"):
+            from tkdesk.portale import e_wayland
+            if e_wayland():
+                return None
+            try:
+                return _puntatore_x11()
+            except Exception as exc:
+                _segnala("X11", exc)
+                return None
         if sys.platform == "win32":
             class P(ctypes.Structure):
                 _fields_ = [("x", ctypes.c_long), ("y", ctypes.c_long)]

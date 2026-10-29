@@ -16,6 +16,8 @@ def cartella_licenza():
         base = os.environ["TKDESK_DATA"]
     elif sys.platform == "darwin":
         base = os.path.expanduser("~/Library/Application Support")
+    elif sys.platform.startswith("linux"):
+        base = os.environ.get("XDG_DATA_HOME") or os.path.expanduser("~/.local/share")
     else:
         base = os.environ.get("APPDATA") or os.path.expanduser("~")
     return os.path.join(base, "tk-desk")

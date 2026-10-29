@@ -10,6 +10,8 @@ Messaggi (JSON nel canale dati):
 Ctrl e Cmd: Qt su Mac scambia i nomi (il tasto Cmd arriva come Control). Per questo il computer che controlla
 manda i nomi di Qt («ctrl», «meta») e quello controllato li traduce per il suo sistema: su Mac ctrl → Cmd e
 meta → Control, su Windows ctrl → Ctrl e meta → tasto Windows. Così Cmd+C da un Mac fa Ctrl+C su Windows.
+Su Linux come su Windows (meta → tasto Super). Linux con X11: pynput; con Wayland: portale del desktop
+(portale.py, la stessa sessione che dà lo schermo), coordinate del flusso dello schermo e keysym.
 """
 import sys
 
@@ -55,14 +57,21 @@ def da_evento_tasto(ev, giu):
 
 class Esecutore:
     """Esegue i messaggi sul sistema con pynput. `schermo` = {left, top, width, height} dello schermo condiviso,
-    nelle stesse unità che usa pynput (pixel su Windows, punti su Mac)."""
+    nelle stesse unità che usa pynput (pixel su Windows e Linux X11, punti su Mac). Linux con Wayland: portale
+    (`schermo` ha anche «nodo», il flusso PipeWire dello schermo; `portale` per le prove, se no quello attivo)."""
 
-    def __init__(self, finto=False):
+    def __init__(self, finto=False, portale=None):
         self.finto = finto
         self.registro = []            # nei test: cosa sarebbe stato fatto
         self.schermo = {"left": 0, "top": 0, "width": 1920, "height": 1080}
         self.premuti = set()
-        if not finto:
+        self.pulsanti = set()
+        self._portale = portale
+        self.wayland = portale is not None
+        if not finto and not self.wayland:
+            from tkdesk.portale import e_wayland
+            self.wayland = e_wayland()
+        if not finto and not self.wayland:
             from pynput import keyboard, mouse
             self._k = keyboard
             self._m = mouse
@@ -87,6 +96,8 @@ class Esecutore:
         return getattr(Key, nome, None)
 
     def esegui(self, m):
+        if self.wayland:
+            return self._esegui_wayland(m)
         t = m.get("t")
         if t == "mm":
             p = self._punto(m.get("x", 0), m.get("y", 0))
@@ -132,10 +143,71 @@ class Esecutore:
             else:
                 self.tastiera.type(c)
 
+    # ───── Linux con Wayland: portale RemoteDesktop
+    def _p(self):
+        if self._portale is not None:
+            return self._portale
+        from tkdesk.portale import portale_attivo
+        return portale_attivo()
+
+    def _esegui_wayland(self, m):
+        """Finché chi è davanti non ha dato il permesso (portale non pronto) i comandi si scartano."""
+        from tkdesk.portale import PULSANTI, keysym_carattere, keysym_tasto
+        p = self._p()
+        if p is None or not p.pronto or not p.remoto:
+            return
+        s = self.schermo
+        t = m.get("t")
+
+        def muovi():
+            x = min(max(float(m.get("x", 0)), 0.0), 1.0) * max(1, s["width"] - 1)
+            y = min(max(float(m.get("y", 0)), 0.0), 1.0) * max(1, s["height"] - 1)
+            p.muovi(s.get("nodo", 0), x, y)
+        if t == "mm":
+            muovi()
+        elif t == "mb":
+            if "x" in m:
+                muovi()
+            codice = PULSANTI.get(m.get("b"), PULSANTI["l"])
+            p.pulsante(codice, bool(m.get("d")))
+            (self.pulsanti.add if m.get("d") else self.pulsanti.discard)(codice)
+        elif t == "mw":
+            dx, dy = int(m.get("dx", 0)), int(m.get("dy", 0))
+            if dy:
+                p.rotella(0, -dy)       # portale: positivo = giù; nei messaggi (come pynput) positivo = su
+            if dx:
+                p.rotella(1, dx)
+        elif t == "k":
+            ks = keysym_tasto(str(m.get("k", "")))
+            if ks is None:
+                return
+            p.tasto(ks, bool(m.get("d")))
+            (self.premuti.add if m.get("d") else self.premuti.discard)(ks)
+        elif t == "c":
+            for c in str(m.get("c", ""))[:64]:
+                ks = keysym_carattere(c)
+                p.tasto(ks, True)
+                p.tasto(ks, False)
+
     def rilascia_tutto(self):
         """A fine sessione nessun tasto resta premuto (Ctrl bloccato sul computer di un cliente è un disastro)."""
         if self.finto:
             self.premuti.clear()
+            return
+        if self.wayland:
+            p = self._p()
+            for ks in list(self.premuti):
+                try:
+                    p.tasto(ks, False)
+                except Exception:
+                    pass
+            for codice in list(self.pulsanti):
+                try:
+                    p.pulsante(codice, False)
+                except Exception:
+                    pass
+            self.premuti.clear()
+            self.pulsanti.clear()
             return
         for t in list(self.premuti):
             try:
