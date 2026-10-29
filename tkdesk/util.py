@@ -70,20 +70,11 @@ def cartella_utente(chiave, riserva):
     """Cartelle dell'utente. Linux: quelle di ~/.config/user-dirs.dirs (in italiano «Scrivania», «Scaricati»,
     «Video», «Documenti»), chiave = DESKTOP, DOWNLOAD, VIDEOS, DOCUMENTS. Altrove (o se manca): ~/<riserva>.
     "" se non esiste."""
-    casa = os.path.expanduser("~")
     if IS_LINUX and chiave:
-        conf = os.environ.get("XDG_CONFIG_HOME") or os.path.join(casa, ".config")
-        try:
-            with open(os.path.join(conf, "user-dirs.dirs"), "r", encoding="utf-8") as fh:
-                for riga in fh:
-                    riga = riga.strip()
-                    if riga.startswith(f"XDG_{chiave}_DIR="):
-                        valore = riga.split("=", 1)[1].strip().strip('"').replace("$HOME", casa)
-                        if os.path.isdir(valore) and os.path.abspath(valore) != os.path.abspath(casa):
-                            return valore
-        except OSError:
-            pass
-    path = os.path.join(casa, riserva)
+        trovata = tk_linux.cartella_utente(chiave)
+        if trovata:
+            return trovata
+    path = os.path.join(os.path.expanduser("~"), riserva)
     return path if os.path.isdir(path) else ""
 
 
@@ -369,7 +360,7 @@ def cancella_tutto(impostazioni):
     for v in voci:
         dimentica(v)
     if IS_LINUX:
-        togli_menu_linux()
+        tk_linux.togli_menu(LINUX_DESKTOP_ID)
     shutil.rmtree(data_dir(), ignore_errors=True)
 
 
@@ -429,45 +420,10 @@ def avvio_automatico(acceso=None):
     raise RuntimeError("non disponibile su questo sistema")
 
 
-def _desktop_exec(path):
-    """Percorso tra virgolette per la riga Exec di un file .desktop (specifica freedesktop)."""
-    for c in ("\\", '"', "`", "$"):
-        path = path.replace(c, "\\" + c)
-    return f'"{path}"'
-
-
-def _file_avvio_linux():
-    conf = os.environ.get("XDG_CONFIG_HOME") or os.path.join(os.path.expanduser("~"), ".config")
-    return os.path.join(conf, "autostart", f"{LINUX_DESKTOP_ID}.desktop")
-
-
 def _avvio_linux(acceso):
-    path = _file_avvio_linux()
-    if acceso is None:
-        return os.path.isfile(path)
-    if acceso:
-        appimage = tk_linux.appimage_path()
-        if not appimage:
-            raise RuntimeError("disponibile solo con il file AppImage di tk-desk")
-        testo = "\n".join([
-            "[Desktop Entry]", "Type=Application", f"Name={APP_TITLE}",
-            "Comment=Accesso non presidiato di tk-desk (resta vicino all'orologio)",
-            f"Exec={_desktop_exec(appimage)} --in-sottofondo", f"TryExec={appimage}", f"Icon={LINUX_DESKTOP_ID}",
-            "Terminal=false", "X-GNOME-Autostart-enabled=true", "X-GNOME-Autostart-Delay=5", "X-TecnikGeek=1",
-        ]) + "\n"
-        try:
-            with open(path, "r", encoding="utf-8") as fh:
-                if fh.read() == testo:
-                    return True
-        except OSError:
-            pass
-        os.makedirs(os.path.dirname(path), exist_ok=True)
-        with open(path + ".tmp", "w", encoding="utf-8") as fh:
-            fh.write(testo)
-        os.replace(path + ".tmp", path)
-    elif os.path.isfile(path):
-        os.remove(path)
-    return acceso
+    return tk_linux.avvio_automatico(LINUX_DESKTOP_ID, APP_TITLE,
+                                     "Accesso non presidiato di tk-desk (resta vicino all'orologio)", acceso,
+                                     "--in-sottofondo")
 
 
 def installa_menu_linux():
@@ -480,17 +436,6 @@ def installa_menu_linux():
     if _avvio_linux(None):
         _avvio_linux(True)
     return fatto
-
-
-def togli_menu_linux():
-    """Contrario di installa_menu_linux (per «Cancella tutto»)."""
-    base = tk_linux.xdg_data_home()
-    for p in (os.path.join(base, "applications", f"{LINUX_DESKTOP_ID}.desktop"),
-              os.path.join(base, "icons", "hicolor", "512x512", "apps", f"{LINUX_DESKTOP_ID}.png")):
-        try:
-            os.remove(p)
-        except OSError:
-            pass
 
 
 def mac_permessi(chiedi=False):
@@ -618,7 +563,7 @@ class Veglia:
                 self._proc = subprocess.Popen(["/usr/bin/caffeinate", "-d", "-i", "-s"],
                                               stdin=subprocess.DEVNULL, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
             elif IS_LINUX and self._dbus is None:
-                self._dbus = inibisci_linux("Assistenza remota in corso")
+                self._dbus = tk_linux.inibisci(APP_TITLE, "Assistenza remota in corso")
             self.sveglia()
         except Exception:
             pass
@@ -647,50 +592,10 @@ class Veglia:
             if self._proc is not None:
                 self._proc.terminate()
             if self._dbus is not None:
-                togli_inibizione_linux(self._dbus)
+                tk_linux.togli_inibizione(self._dbus)
         except Exception:
             pass
         self._proc = None
         self._dbus = None
 
 
-_INIBIZIONI = (
-    # (percorso, servizio = interfaccia, metodo, firma, argomenti(motivo), metodo per togliere)
-    ("/org/gnome/SessionManager", "org.gnome.SessionManager", "Inhibit", "susu",
-     lambda motivo: (APP_TITLE, 0, motivo, 4 | 8), "Uninhibit"),          # 4 = sospensione, 8 = inattività
-    ("/org/freedesktop/ScreenSaver", "org.freedesktop.ScreenSaver", "Inhibit", "ss",
-     lambda motivo: (APP_TITLE, motivo), "UnInhibit"),
-)
-
-
-def inibisci_linux(motivo):
-    """Linux: niente salvaschermo, blocco o sospensione finché non si chiama togli_inibizione_linux().
-    Ritorna (connessione, voce, cookie) oppure None se il desktop non lo permette."""
-    from jeepney import DBusAddress, new_method_call
-    from jeepney.io.blocking import open_dbus_connection
-    from jeepney.wrappers import unwrap_msg
-    conn = open_dbus_connection(bus="SESSION")
-    for voce in _INIBIZIONI:
-        percorso, servizio, metodo, firma, argomenti, _togli = voce
-        try:
-            msg = new_method_call(DBusAddress(percorso, bus_name=servizio, interface=servizio), metodo, firma,
-                                  argomenti(motivo))
-            cookie = unwrap_msg(conn.send_and_get_reply(msg, timeout=5))[0]
-            return conn, voce, cookie
-        except Exception:
-            continue
-    conn.close()
-    return None
-
-
-def togli_inibizione_linux(stato):
-    from jeepney import DBusAddress, new_method_call
-    conn, voce, cookie = stato
-    try:
-        percorso, servizio, _m, _f, _a, togli = voce
-        conn.send_and_get_reply(new_method_call(DBusAddress(percorso, bus_name=servizio, interface=servizio),
-                                                togli, "u", (int(cookie),)), timeout=5)
-    except Exception:
-        pass
-    finally:
-        conn.close()

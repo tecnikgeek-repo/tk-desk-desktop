@@ -2013,6 +2013,8 @@ def main():
     app.setApplicationName(APP_TITLE)
     if IS_LINUX:
         app.setDesktopFileName(util.LINUX_DESKTOP_ID)   # Wayland: la barra delle applicazioni trova l'icona dal .desktop
+        from tkdesk.tk_linux_qt import instrada_link
+        instrada_link(app)  # link e cartelle con l'ambiente del sistema, non con quello del pacchetto
     app.setStyle("Fusion")
     from tkdesk.tk_licenza_qt import stile_caselle_globale
     app.setStyleSheet(STYLE_DESK + stile_caselle_globale())
