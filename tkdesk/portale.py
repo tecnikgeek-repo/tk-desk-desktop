@@ -307,10 +307,12 @@ def gst_launch():
 
 def comando_gst(sorgente, larghezza, altezza, fps=FPS):
     """Pipeline: sorgente → al massimo `fps` al secondo (solo scarti, niente copie se lo schermo è fermo) →
-    BGRx della misura dello schermo → stdout."""
-    return ([gst_launch() or "gst-launch-1.0", "-q"] + list(sorgente)
-            + ["!", "videorate", "drop-only=true", f"max-rate={int(fps)}",
-               "!", "videoconvert", "!", "videoscale",
+    BGRx della misura dello schermo → stdout. Con pipewiresrc niente videorate: i fotogrammi dello schermo non
+    hanno durata e videorate si ferma (assertion GST_BUFFER_DURATION_IS_VALID); Mutter manda già un fotogramma
+    solo quando lo schermo cambia, e chi legge tiene solo l'ultimo."""
+    limite = [] if "pipewiresrc" in sorgente else ["!", "videorate", "drop-only=true", f"max-rate={int(fps)}"]
+    return ([gst_launch() or "gst-launch-1.0", "-q"] + list(sorgente) + limite
+            + ["!", "videoconvert", "!", "videoscale",
                "!", f"video/x-raw,format=BGRx,width={int(larghezza)},height={int(altezza)}",
                "!", "fdsink", "fd=1", "sync=false"])
 
