@@ -737,43 +737,82 @@ class ConfermaAccesso(TkDialog):
 
 # ───────────────────────────────────────────── finestre di impostazione
 class PermessiMac(TkDialog):
-    """Mac: i due permessi che servono per essere controllati, con i pulsanti che aprono la voce giusta."""
+    """Mac: i due permessi che servono per essere controllati, passo per passo, con i pulsanti che aprono la voce
+    giusta. Da Impostazioni si apre anche con i permessi già concessi (tutte e due le voci, con lo stato)."""
 
-    def __init__(self, win, schermo, accesso):
-        super().__init__(win, 480)
+    PASSI = ("1. Premi «Apri l'impostazione» (oppure: menu Apple, la mela in alto a sinistra → Impostazioni di "
+             "Sistema → Privacy e sicurezza).\n"
+             "2. Accendi l'interruttore accanto a tk-desk. Se non c'è, premi «+» in fondo all'elenco e scegli "
+             "tk-desk dalla cartella Applicazioni.\n"
+             "3. Conferma con la password del Mac (o con il dito sul Touch ID).\n"
+             "4. Premi «Riapri tk-desk»: il Mac fa valere i permessi solo dopo la riapertura.")
+
+    def __init__(self, win, schermo, accesso, tutte=False):
+        super().__init__(win, 500)
         from tkdesk.util import apri_impostazioni_mac
-        self.head(ic("alert", "#fbbf24", 40).pixmap(44, 44), "Due permessi per farti aiutare",
+        ok = schermo and accesso
+        self.head(ic("check" if ok else "alert", "#6ee7b7" if ok else "#fbbf24", 40).pixmap(44, 44),
+                  "Due permessi per farti aiutare",
                   "Servono solo se altri devono controllare questo Mac. Per controllare un altro computer no.")
         righe = []
-        if not schermo:
-            righe.append(("REGISTRAZIONE SCHERMO", "Senza, chi ti aiuta vede solo lo sfondo della scrivania.", "schermo"))
-        if not accesso:
-            righe.append(("ACCESSIBILITÀ", "Senza, chi ti aiuta vede lo schermo ma non può usare mouse e tastiera.", "accessibilita"))
-        for titolo, testo, quale in righe:
+        if tutte or not schermo:
+            righe.append(("REGISTRAZIONE SCHERMO", schermo, "Senza, chi ti aiuta vede solo lo sfondo della scrivania. "
+                          "Sui Mac più nuovi la voce si chiama «Registrazione schermo e audio di sistema».", "schermo"))
+        if tutte or not accesso:
+            righe.append(("ACCESSIBILITÀ (MOUSE E TASTIERA)", accesso,
+                          "Senza, chi ti aiuta vede lo schermo ma non può usare mouse e tastiera.", "accessibilita"))
+        for titolo, concesso, testo, quale in righe:
             card = QFrame(objectName="acard")
             cl = QVBoxLayout(card)
             cl.setContentsMargins(16, 12, 16, 12)
-            cl.addWidget(QLabel(titolo, objectName="atitle"))
-            lab = QLabel(testo + " In Impostazioni di Sistema → Privacy e sicurezza accendi tk-desk.")
+            cl.addWidget(QLabel(titolo + ("  ·  CONCESSO" if concesso else ""), objectName="atitle"))
+            lab = QLabel("Tutto OK: tk-desk ha questo permesso." if concesso else testo)
             lab.setWordWrap(True)
             cl.addWidget(lab)
-            cl.addWidget(text_btn("gear", "Apri l'impostazione", lambda _=False, q=quale: apri_impostazioni_mac(q), "#fff", "accent"))
+            if not concesso:
+                cl.addWidget(text_btn("gear", "Apri l'impostazione",
+                                      lambda _=False, q=quale: apri_impostazioni_mac(q), "#fff", "accent"))
             self.body.addWidget(card)
-        nota = QLabel("Se nelle Impostazioni tk-desk risulta già acceso, il permesso è della versione di prima e "
-                      "non vale più: premi «Ripristina i permessi», concedili di nuovo e tk-desk si riapre da solo.")
+        if not ok:
+            card = QFrame(objectName="acard")
+            cl = QVBoxLayout(card)
+            cl.setContentsMargins(16, 12, 16, 12)
+            cl.addWidget(QLabel("COME SI FA", objectName="atitle"))
+            lab = QLabel(self.PASSI)
+            lab.setWordWrap(True)
+            cl.addWidget(lab)
+            self.body.addWidget(card)
+        nota = QLabel("Se nelle Impostazioni tk-desk risulta già acceso ma qui manca (succede dopo un aggiornamento), "
+                      "premi «Ripristina i permessi», concedili di nuovo e tk-desk si riapre da solo.")
         nota.setObjectName("asub")
         nota.setWordWrap(True)
         self.body.addWidget(nota)
         self.err = QLabel("", objectName="err")
         self.err.setWordWrap(True)
         self.body.addWidget(self.err)
-        self.body.addWidget(text_btn("refresh", "Ripristina i permessi", self._ripristina, "#fff", "accent"))
+        riga0 = QHBoxLayout()
+        riga0.addWidget(text_btn("refresh", "Ripristina i permessi", self._ripristina, "#fff", "ghost"))
+        riga0.addStretch(1)
+        if not ok:
+            riga0.addWidget(text_btn("refresh", "Riapri tk-desk", self._riapri, "#fff", "accent"))
+        self.body.addLayout(riga0)
         self.mai = False
         riga = QHBoxLayout()
-        riga.addWidget(text_btn("", "Non chiedere più", lambda: (setattr(self, "mai", True), self.accept()), "#fff", "ghost"))
+        if not tutte:
+            riga.addWidget(text_btn("", "Non chiedere più", lambda: (setattr(self, "mai", True), self.accept()),
+                                    "#fff", "ghost"))
         riga.addStretch(1)
-        riga.addWidget(text_btn("", "Più tardi", self.accept, "#fff", "ghost"))
+        riga.addWidget(text_btn("", "Chiudi" if tutte else "Più tardi", self.accept, "#fff", "ghost"))
         self.body.addLayout(riga)
+
+    def _riapri(self):
+        from tkdesk.util import riavvia
+        riavvia()
+        win = self.parent()
+        if win is not None:
+            win.uscita = True
+            QTimer.singleShot(300, win.close)
+        self.accept()
 
 
 def _ripristina_e_riavvia(dlg):
@@ -1056,11 +1095,16 @@ class Impostazioni(TkDialog):
         self.body.addWidget(card2)
         riga = QHBoxLayout()
         riga.addWidget(text_btn("key", "Accesso non presidiato", self._non_presidiato, "#fff", "ghost"))
-        if IS_MAC or IS_LINUX:
-            riga.addWidget(text_btn("trash", "Cancella tutto e togli l'avvio automatico", self._cancella, "#fca5a5",
-                                    "ghost"))
+        if IS_MAC:
+            riga.addWidget(text_btn("lock", "Permessi del Mac", self._permessi, "#fff", "ghost"))
         riga.addStretch(1)
         self.body.addLayout(riga)
+        if IS_MAC or IS_LINUX:      # riga a sé: accanto agli altri il testo veniva tagliato
+            riga_c = QHBoxLayout()
+            riga_c.addWidget(text_btn("trash", "Cancella tutto e togli l'avvio automatico", self._cancella, "#fca5a5",
+                                      "ghost"))
+            riga_c.addStretch(1)
+            self.body.addLayout(riga_c)
         riga2 = QHBoxLayout()
         riga2.addStretch(1)
         riga2.addWidget(text_btn("", "Annulla", self.reject, "#fff", "ghost"))
@@ -1075,6 +1119,12 @@ class Impostazioni(TkDialog):
     def _non_presidiato(self):
         self.accept()
         self.win._non_presidiato()
+
+    def _permessi(self):
+        from tkdesk.util import mac_permessi
+        self.accept()
+        schermo, accesso = mac_permessi()
+        PermessiMac(self.win, schermo, accesso, tutte=True).exec()
 
     def _cancella(self):
         if IS_LINUX:

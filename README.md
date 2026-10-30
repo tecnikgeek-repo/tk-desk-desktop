@@ -101,7 +101,14 @@ pubblicati dall'autore.
 
 - **Windows 10 / 11** — scarica l'installer `.exe` e avvialo. Non servono i permessi di amministratore.
 - **macOS** (Intel o Apple Silicon) — apri il `.dmg` e trascina l'app in *Applicazioni*. Al primo avvio: clic destro sull'app → *Apri*.
-- **macOS** — al primo avvio concedi *Registrazione schermo* e *Accessibilità* (Impostazioni di Sistema → Privacy e sicurezza): servono per farti controllare.
+- **macOS** — per farti controllare servono due permessi del Mac, una volta sola: *Registrazione schermo* (senza, chi ti aiuta vede solo lo sfondo) e *Accessibilità* (senza, non può usare mouse e tastiera). Per controllare un altro computer non servono.
+  1. Menu Apple → *Impostazioni di Sistema* → *Privacy e sicurezza*.
+  2. Apri *Registrazione schermo* (sui Mac più nuovi *Registrazione schermo e audio di sistema*), poi allo stesso modo *Accessibilità*.
+  3. Accendi l'interruttore accanto a tk-desk; se non c'è, premi **+** e scegli tk-desk da *Applicazioni*.
+  4. Conferma con la password del Mac o con Touch ID.
+  5. Chiudi e riapri tk-desk: i permessi valgono dalla riapertura.
+
+  tk-desk mostra questi passaggi da solo al primo avvio, con i pulsanti che aprono la voce giusta; la finestra si ritrova in *Impostazioni* → *Permessi del Mac*. Se dopo un aggiornamento tk-desk risulta acceso ma mouse e tastiera non vanno, lì c'è **Ripristina i permessi**.
 - **Linux** (Ubuntu 22.04 o più recente, 64 bit) — scarica il file `.AppImage`, rendilo avviabile (*Proprietà → Esegui come programma*) e aprilo: si aggiunge da solo al menu delle applicazioni.
 
 Gli aggiornamenti arrivano da soli: quando esce una versione nuova il programma te lo propone.

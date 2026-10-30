@@ -13,10 +13,23 @@ la polizia. Usa tk-desk solo con persone che conosci.
 2. Apri tk-desk da Applicazioni (o da Launchpad).
 
 PER FARTI AIUTARE (essere controllato)
-Il Mac chiede due permessi, una volta sola: Impostazioni di Sistema → Privacy e sicurezza →
-  • «Registrazione schermo»: accendi tk-desk (senza, chi ti aiuta vede solo lo sfondo);
-  • «Accessibilità»: accendi tk-desk (senza, chi ti aiuta non può usare mouse e tastiera).
-Poi chiudi e riapri tk-desk. Per controllare un altro computer i permessi non servono.
+Servono due permessi del Mac, una volta sola. Per controllare un altro computer non servono.
+  • «Registrazione schermo» (sui Mac più nuovi «Registrazione schermo e audio di sistema»):
+    senza, chi ti aiuta vede solo lo sfondo della scrivania.
+  • «Accessibilità»: senza, chi ti aiuta vede lo schermo ma non può usare mouse e tastiera.
+
+Come si danno (uguale per tutti e due):
+  1. Menu Apple (la mela in alto a sinistra) → Impostazioni di Sistema → Privacy e sicurezza.
+  2. Apri «Registrazione schermo» (poi, allo stesso modo, «Accessibilità»).
+  3. Accendi l'interruttore accanto a tk-desk. Se tk-desk non c'è, premi «+» in fondo
+     all'elenco e scegli tk-desk dalla cartella Applicazioni.
+  4. Il Mac chiede la sua password (o il dito sul Touch ID): è quella con cui accendi il Mac.
+  5. Chiudi tk-desk (menu tk-desk → Esci) e riaprilo: i permessi valgono dalla riapertura.
+
+tk-desk ti guida da solo: al primo avvio mostra una finestra con questi passaggi e i pulsanti
+che aprono la voce giusta. La ritrovi in tk-desk → Impostazioni → «Permessi del Mac».
+Se tk-desk risulta già acceso ma mouse e tastiera non vanno (succede dopo un aggiornamento),
+in quella finestra premi «Ripristina i permessi» e concedili di nuovo.
 A ogni collegamento con la password monouso decidi tu con «Accetta» o «Rifiuta» (dopo 30
 secondi senza risposta è rifiutato). La password cambia dopo ogni sessione e da sola dopo 10
 minuti. I file ricevuti arrivano solo se li accetti e il Mac li tratta come scaricati da internet.
