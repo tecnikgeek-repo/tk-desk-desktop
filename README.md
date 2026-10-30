@@ -5,11 +5,11 @@
 
 <br><br>
 
-<a href="https://pietrodefilippis.it/scarica-programma/tk-desk/windows/"><img alt="Scarica per Windows" src="https://img.shields.io/badge/%E2%AC%87%20%20Windows-scarica%20gratis-0078D4?style=for-the-badge&logo=windows&logoColor=white"></a> &nbsp; <a href="https://pietrodefilippis.it/scarica-programma/tk-desk/mac/"><img alt="Scarica per macOS" src="https://img.shields.io/badge/%E2%AC%87%20%20macOS-scarica%20gratis-111111?style=for-the-badge&logo=apple&logoColor=white"></a> &nbsp; <a href="https://pietrodefilippis.it/donazione/"><img alt="Offrimi un caffè" src="https://img.shields.io/badge/%E2%98%95%20%20Offrimi%20un%20caff%C3%A8-facoltativo-f59e0b?style=for-the-badge"></a>
+<a href="https://pietrodefilippis.it/scarica-programma/tk-desk/windows/"><img alt="Scarica per Windows" src="https://img.shields.io/badge/%E2%AC%87%20%20Windows-scarica%20gratis-0078D4?style=for-the-badge&logo=windows&logoColor=white"></a> &nbsp; <a href="https://pietrodefilippis.it/scarica-programma/tk-desk/mac/"><img alt="Scarica per macOS" src="https://img.shields.io/badge/%E2%AC%87%20%20macOS-scarica%20gratis-111111?style=for-the-badge&logo=apple&logoColor=white"></a> &nbsp; <a href="https://pietrodefilippis.it/scarica-programma/tk-desk/linux/"><img alt="Scarica per Linux" src="https://img.shields.io/badge/%E2%AC%87%20%20Linux-scarica%20gratis-E95420?style=for-the-badge&logo=linux&logoColor=white"></a> &nbsp; <a href="https://pietrodefilippis.it/donazione/"><img alt="Offrimi un caffè" src="https://img.shields.io/badge/%E2%98%95%20%20Offrimi%20un%20caff%C3%A8-facoltativo-f59e0b?style=for-the-badge"></a>
 
 <br><br>
 
-<a href="COPYING"><img alt="Licenza AGPL-3.0" src="https://img.shields.io/badge/licenza-AGPL--3.0-16a34a?style=for-the-badge"></a> <img alt="Windows" src="https://img.shields.io/badge/Windows-10%20%C2%B7%2011-0078D4?style=for-the-badge&logo=windows&logoColor=white"> <img alt="macOS" src="https://img.shields.io/badge/macOS-Intel%20%C2%B7%20Apple%20Silicon-111111?style=for-the-badge&logo=apple&logoColor=white"> <img alt="Linux" src="https://img.shields.io/badge/Linux-Ubuntu%2022.04%2B-E95420?style=for-the-badge&logo=ubuntu&logoColor=white"> <img alt="Versione" src="https://img.shields.io/github/v/tag/tecnikgeek-repo/tk-desk-desktop?label=versione&style=for-the-badge&color=059669"> <img alt="Zero pubblicità" src="https://img.shields.io/badge/pubblicit%C3%A0-zero-0f172a?style=for-the-badge">
+<a href="COPYING"><img alt="Licenza AGPL-3.0" src="https://img.shields.io/badge/licenza-AGPL--3.0-16a34a?style=for-the-badge"></a> <img alt="Windows" src="https://img.shields.io/badge/Windows-10%20%C2%B7%2011-0078D4?style=for-the-badge&logo=windows&logoColor=white"> <img alt="macOS" src="https://img.shields.io/badge/macOS-Intel%20%C2%B7%20Apple%20Silicon-111111?style=for-the-badge&logo=apple&logoColor=white"> <img alt="Linux" src="https://img.shields.io/badge/Linux-Ubuntu%2022.04%2B-E95420?style=for-the-badge&logo=linux&logoColor=white"> <img alt="Versione" src="https://img.shields.io/github/v/tag/tecnikgeek-repo/tk-desk-desktop?label=versione&style=for-the-badge&color=059669"> <img alt="Zero pubblicità" src="https://img.shields.io/badge/pubblicit%C3%A0-zero-0f172a?style=for-the-badge">
 
 <br>
 
@@ -102,7 +102,7 @@ pubblicati dall'autore.
 - **Windows 10 / 11** — scarica l'installer `.exe` e avvialo. Non servono i permessi di amministratore.
 - **macOS** (Intel o Apple Silicon) — apri il `.dmg` e trascina l'app in *Applicazioni*. Al primo avvio: clic destro sull'app → *Apri*.
 - **macOS** — al primo avvio concedi *Registrazione schermo* e *Accessibilità* (Impostazioni di Sistema → Privacy e sicurezza): servono per farti controllare.
-- **Linux** (Ubuntu 22.04 o più recente, x86_64, Wayland o X11) — scarica il file `.AppImage`, rendilo avviabile (Proprietà → *Esegui come programma*) e aprilo: si aggiunge da solo al menu delle applicazioni. Con Wayland, per farti controllare, il sistema chiede il permesso con la sua finestra «Condividi lo schermo».
+- **Linux** (Ubuntu 22.04 o più recente, 64 bit) — scarica il file `.AppImage`, rendilo avviabile (*Proprietà → Esegui come programma*) e aprilo: si aggiunge da solo al menu delle applicazioni.
 
 Gli aggiornamenti arrivano da soli: quando esce una versione nuova il programma te lo propone.
 
@@ -115,16 +115,13 @@ Serve **Python 3.13**.
 
 ```bash
 python -m venv .venv
-.venv\Scripts\activate          (su macOS e Linux: source .venv/bin/activate)
+.venv\Scripts\activate          (su macOS: source .venv/bin/activate)
 pip install "pyside6-essentials==6.12.*" certifi aiortc mss pynput numpy sounddevice
-# solo Linux: pip install secretstorage jeepney python-xlib
 python run.py
 ```
 
 Prove senza rete né schermo: `python tests/test_core.py` e `python tests/test_finestre.py`.
-Pacchetti: `installer\build.ps1` (Windows), `mac/build_mac.sh` (macOS), `linux/build_linux.sh` (Linux, AppImage).
-Prove su Linux dal pacchetto: `tk-desk-….AppImage --prova-portale` (cosa offre il sistema, nessuna finestra),
-`--prova-cattura schermo.png` e `--prova-comandi` (la prima volta con Wayland il sistema chiede il permesso).
+Pacchetti: `installer\build.ps1` (Windows), `mac/build_mac.sh` (macOS).
 
 </details>
 
