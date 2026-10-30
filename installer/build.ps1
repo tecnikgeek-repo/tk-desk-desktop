@@ -10,6 +10,11 @@ $stageRoot = Join-Path $env:TEMP 'tkdesk-stage'
 $stage = Join-Path $stageRoot 'app'
 $dist = if ($env:TKDESK_DIST) { $env:TKDESK_DIST } else { 'C:\dev\tk-desk-dist' }
 $venv = if (Test-Path (Join-Path $root '.venv')) { Join-Path $root '.venv' } elseif ($env:TKDESK_VENV) { $env:TKDESK_VENV } else { 'C:\dev\venv-tkdesk' }
+
+# Smart App Control blocca .venv\Scripts\python.exe (lanciatore non firmato): Python di base + librerie del venv,
+# PYTHONPATH solo per la durata della chiamata (il collaudo del pacchetto non deve vedere le librerie del venv)
+$venvPy = ((Get-Content (Join-Path $venv 'pyvenv.cfg') | Where-Object { $_ -match '^home\s*=' }) -replace '^home\s*=\s*', '').Trim() + '\python.exe'
+function VenvPy { $env:PYTHONPATH = Join-Path $venv 'Lib\site-packages'; try { & $venvPy @args } finally { Remove-Item Env:PYTHONPATH -ErrorAction SilentlyContinue } }
 Write-Host "== tk-desk ${version} (venv $venv)"
 if (Test-Path $stageRoot) { Remove-Item $stageRoot -Recurse -Force }
 New-Item -ItemType Directory -Force $stage | Out-Null
@@ -21,7 +26,7 @@ function Robo($src, $dst, [string[]]$extra) {
 }
 
 # icona
-& "$venv\Scripts\python.exe" tools_make_icon.py | Out-Null
+VenvPy tools_make_icon.py | Out-Null
 if (-not (Test-Path 'assets\tk-desk.ico')) { throw 'Icona non generata' }
 
 # Python ridotto (senza tkinter, test, pip...) + le librerie di tk-desk + solo le parti di PySide6 che servono
@@ -77,7 +82,7 @@ Copy-Item 'assets\tk-desk.ico' "$stage\assets\"
 Copy-Item 'run.py' $stage
 # testi delle licenze accanto a run.py: AGPL di tk-desk, licenze dei componenti inclusi (dai *.dist-info) e COMPONENTI.txt
 $env:PYTHONIOENCODING = 'utf-8'
-& "$venv\Scripts\python.exe" tools_licenze.py "$stage\licenze"
+VenvPy tools_licenze.py "$stage\licenze"
 if ($LASTEXITCODE -ne 0 -or -not (Test-Path "$stage\licenze\COPYING-AGPL-3.0.txt") -or -not (Test-Path "$stage\licenze\COMPONENTI.txt")) {
     throw 'Cartella licenze non creata'
 }
