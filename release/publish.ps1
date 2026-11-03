@@ -5,7 +5,9 @@
 #   le cartelle Mac\ e Linux\ di Dropbox non si toccano).
 param(
     [Parameter(Mandatory = $true)][string]$Notes,
-    [switch]$SoloWindows
+    [switch]$SoloWindows,
+    # commit e tag già inviati e file Mac/Linux già in dist\mac-<versione> (via SSH il PC non ha le credenziali di GitHub)
+    [switch]$SenzaGitHub
 )
 $ErrorActionPreference = 'Stop'
 $root = Split-Path $PSScriptRoot -Parent
@@ -44,12 +46,15 @@ $assets += @{ key = 'windows'; file = (Resolve-Path $setupWin).Path }
 
 # --- Mac e Linux: build su GitHub del commit corrente, dmg e AppImage presi dalla release v<versione>
 if (git status --porcelain --untracked-files=no) { throw 'Ci sono modifiche non committate: fai commit prima di pubblicare' }
+if (-not $SenzaGitHub) {
 git push -q
 # tag della versione: e' il link "codice sorgente" del programma (URL_SORGENTE = .../tree/v<versione>)
 if (-not (git tag --list "v$version")) { git tag "v$version" }
 git push -q origin "v$version"
 if ($LASTEXITCODE -ne 0) { throw "Push del tag v$version non riuscito" }
+}
 if (-not $SoloWindows) {
+if (-not $SenzaGitHub) {
     # le build Mac e Linux non partono da sole a ogni push: le avvio io, in parallelo, sul commit appena inviato
     $sha = (git rev-parse HEAD).Trim()
     $runs = @{}
@@ -72,18 +77,23 @@ if (-not $SoloWindows) {
         gh run watch $runs[$wf] --repo $repo --exit-status | Out-Null
         if ($LASTEXITCODE -ne 0) { throw "$wf fallita: https://github.com/$repo/actions/runs/$($runs[$wf]) (per pubblicare solo Windows: -SoloWindows)" }
     }
+}
     $macDir = "$dist\mac-$version"
+if (-not $SenzaGitHub) {
     if (Test-Path $macDir) { Remove-Item -LiteralPath $macDir -Recurse -Force }
     New-Item -ItemType Directory -Force $macDir | Out-Null
     gh release download "v$version" --repo $repo --dir $macDir --pattern '*.dmg'
     if ($LASTEXITCODE -ne 0) { throw "Download dei dmg dalla release v$version fallito" }
+}
     foreach ($arch in 'arm64', 'x86_64') {
         $dmg = Join-Path $macDir "tk-desk-$version-mac-$arch.dmg"
         if (-not (Test-Path $dmg)) { throw "Manca il dmg $arch" }
         $assets += @{ key = "mac-$arch"; file = (Resolve-Path $dmg).Path }
     }
+if (-not $SenzaGitHub) {
     gh release download "v$version" --repo $repo --dir $macDir --pattern '*.AppImage' --clobber
     if ($LASTEXITCODE -ne 0) { throw "Download dell'AppImage dalla release v$version fallito" }
+}
     $appImage = Join-Path $macDir "tk-desk-$version-linux-x86_64.AppImage"
     if (-not (Test-Path $appImage)) { throw "Manca l'AppImage Linux" }
     $assets += @{ key = 'linux-x86_64'; file = (Resolve-Path $appImage).Path }
