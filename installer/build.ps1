@@ -13,7 +13,11 @@ $venv = if (Test-Path (Join-Path $root '.venv')) { Join-Path $root '.venv' } els
 
 # Smart App Control blocca .venv\Scripts\python.exe (lanciatore non firmato): Python di base + librerie del venv,
 # PYTHONPATH solo per la durata della chiamata (il collaudo del pacchetto non deve vedere le librerie del venv)
-$venvPy = ((Get-Content (Join-Path $venv 'pyvenv.cfg') | Where-Object { $_ -match '^home\s*=' }) -replace '^home\s*=\s*', '').Trim() + '\python.exe'
+$venvHome = ((Get-Content (Join-Path $venv 'pyvenv.cfg') | Where-Object { $_ -match '^home\s*=' }) -replace '^home\s*=\s*', '').Trim()
+# uv mette una giunzione al posto della cartella: via SSH Windows non la attraversa
+$venvHomeVera = (Get-Item $venvHome).Target
+if ($venvHomeVera) { $venvHome = @($venvHomeVera)[0] }
+$venvPy = $venvHome + '\python.exe'
 function VenvPy { $env:PYTHONPATH = Join-Path $venv 'Lib\site-packages'; try { & $venvPy @args } finally { Remove-Item Env:PYTHONPATH -ErrorAction SilentlyContinue } }
 Write-Host "== tk-desk ${version} (venv $venv)"
 if (Test-Path $stageRoot) { Remove-Item $stageRoot -Recurse -Force }
