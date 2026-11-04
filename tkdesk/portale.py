@@ -16,6 +16,7 @@ Consenti il controllo remoto». Tutto passa da D-Bus con jeepney (già nel pacch
 
 Se il desktop offre solo ScreenCast (niente RemoteDesktop) si vede lo schermo ma i comandi non arrivano.
 """
+from tkdesk.errori import frase_errore, motivo_errore
 import concurrent.futures
 import json
 import os
@@ -78,6 +79,8 @@ def keysym_carattere(c):
 
 
 class ErrorePortale(Exception):
+    leggibile = True
+
     pass
 
 
@@ -158,7 +161,7 @@ class Portale:
         if codice == 1:
             raise ErrorePortale("chi è davanti al computer non ha consentito la condivisione dello schermo")
         if codice != 0:
-            raise ErrorePortale(f"il portale ha rifiutato la richiesta ({metodo}, codice {codice})")
+            raise ErrorePortale("il sistema ha rifiutato la richiesta di condividere lo schermo")
         return {k: v[1] for k, v in risultati.items()}
 
     # ---- sessione
@@ -356,7 +359,7 @@ class LettoreGst:
         except (OSError, ValueError):
             pass
         finally:
-            self.errore = self.errore or ("; ".join(self._stderr[-3:]) or "il flusso dello schermo si è fermato")
+            self.errore = self.errore or "il flusso dello schermo si è fermato"
 
     def _errori(self):
         try:
@@ -454,7 +457,7 @@ class SorgenteWayland:
                 self._avvisa(self.al_problema, "Su questo Linux il sistema permette solo di vedere lo schermo: "
                                                "mouse e tastiera non arrivano.")
         except Exception as exc:
-            self.errore = str(exc) if isinstance(exc, ErrorePortale) else f"{exc.__class__.__name__}: {exc}"
+            self.errore = motivo_errore(exc)
             self._avvisa(self.al_problema, f"Schermo dell'altro computer non disponibile: {self.errore}.")
 
     def _nuovo_lettore(self):
@@ -479,7 +482,7 @@ class SorgenteWayland:
                 try:
                     self._nuovo_lettore()
                 except Exception as exc:
-                    self._avvisa(self.al_problema, f"Cambio di schermo non riuscito: {exc}")
+                    self._avvisa(self.al_problema, frase_errore("Cambio di schermo non riuscito.", exc))
 
     @property
     def attuale(self):

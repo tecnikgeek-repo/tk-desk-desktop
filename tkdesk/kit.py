@@ -1,5 +1,6 @@
 """Kit grafico di tk-desk: colori, stile, icone disegnate, card, finestre nel nostro stile, aggiornamenti.
 Ripreso da tk-iscrizioni (stesso aspetto in tutti i software TK): cambia solo l'accento, verde smeraldo."""
+from tkdesk.errori import motivo_errore
 import html
 import time
 
@@ -539,7 +540,7 @@ class Worker(QThread):
         try:
             self.done.emit(self.fn())
         except Exception as exc:
-            self.failed.emit(str(exc) or exc.__class__.__name__)
+            self.failed.emit(motivo_errore(exc))
 
 
 class DownloadThread(QThread):
@@ -563,4 +564,4 @@ class DownloadThread(QThread):
         except InterruptedError:
             self.failed.emit("")
         except Exception as exc:
-            self.failed.emit(str(exc))
+            self.failed.emit(motivo_errore(exc))

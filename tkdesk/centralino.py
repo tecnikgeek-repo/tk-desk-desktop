@@ -27,6 +27,8 @@ ALFABETO = "0123456789"
 
 
 class ErroreCentralino(Exception):
+    leggibile = True
+
     def __init__(self, messaggio, codice=""):
         super().__init__(messaggio)
         self.codice = codice
@@ -124,7 +126,7 @@ class Centralino:
             try:
                 risposta = json.loads(e.read().decode("utf-8"))
             except Exception:
-                raise ErroreCentralino(f"Il server ha risposto {e.code}", "http") from None
+                raise ErroreCentralino("Il server non risponde come dovrebbe: riprova tra poco.", "http") from None
         except (urllib.error.URLError, TimeoutError, OSError) as e:
             raise ErroreCentralino("Nessuna connessione a internet o server non raggiungibile.", "rete") from e
         if not isinstance(risposta, dict):

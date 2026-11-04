@@ -4,6 +4,7 @@ La traccia audio c'è da subito in ogni sessione e manda silenzio finché la chi
 chiamata parte e si chiude senza rinegoziare il collegamento. `AudioFinto` serve alle prove (tono al posto
 del microfono, conta i campioni ricevuti).
 """
+import logging
 import asyncio
 import fractions
 import os
@@ -13,6 +14,8 @@ import threading
 import time
 
 import numpy as np
+
+_registro = logging.getLogger("tk")
 
 RATE = 48000
 CAMPIONI = 960          # 20 ms a 48 kHz
@@ -65,7 +68,8 @@ class Audio:
             prepara_portaudio()
             import sounddevice as sd
         except Exception as exc:
-            return f"audio non disponibile ({exc})"
+            _registro.warning("audio: %r", exc)
+            return "audio non disponibile"
         errori = []
         for tipo in ("input", "output"):
             stream = None
@@ -83,7 +87,7 @@ class Audio:
                     stream = None
                     err = exc
             if stream is None:
-                errori.append(("microfono" if tipo == "input" else "altoparlanti") + f": {err}")
+                errori.append(("microfono" if tipo == "input" else "altoparlanti") + " non disponibili")
             elif tipo == "input":
                 self._mic, self._rate_mic = stream, rate
             else:

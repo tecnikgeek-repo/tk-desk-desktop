@@ -1,5 +1,6 @@
 """Finestre di tk-desk: principale (questo computer + controlla un altro), sessione, barra «sei controllato»,
 rubrica, accesso non presidiato, icona vicino all'orologio."""
+from tkdesk.errori import frase_errore
 import os
 import sys
 import threading
@@ -920,7 +921,7 @@ class NonPresidiato(TkDialog):
             if self.avvio.isEnabled() and self.avvio.isChecked() != avvio_automatico():
                 avvio_automatico(self.avvio.isChecked())
         except Exception as exc:
-            self.err.setText(f"Non riesco a impostare l'avvio con il computer: {exc}")
+            self.err.setText(frase_errore("Non riesco a impostare l'avvio con il computer.", exc))
             return
         self.win.aggiorna_stato()
         self.accept()
@@ -1529,7 +1530,7 @@ class Principale(QMainWindow):
                 except Exception:
                     pass
                 for id_ in self.motore.sessioni_entrata():
-                    self.motore.avviso(id_, f"Il mouse non funziona sull'altro computer: {exc}")
+                    self.motore.avviso(id_, frase_errore("Il mouse non funziona sull'altro computer.", exc))
 
     def _a(self, chiave, metodo, *args):
         w = self.sessioni.get(chiave)
@@ -1803,7 +1804,7 @@ class Principale(QMainWindow):
         try:
             path = util.create_desktop_shortcut()
         except Exception as exc:
-            tk_warn(self, APP_TITLE, f"Non riesco a creare l'icona sul Desktop:\n{exc}")
+            tk_warn(self, APP_TITLE, frase_errore("Non riesco a creare l'icona sul Desktop.", exc))
             return
         tk_info(self, APP_TITLE, f"Icona creata sul Desktop:\n{path}", "ok")
 
@@ -1878,7 +1879,7 @@ class Principale(QMainWindow):
                 updater.apply_update(path, new_version=str(self.manifest["version"]))
             except Exception as exc:
                 prog.close()
-                tk_warn(self, APP_TITLE, f"Aggiornamento non riuscito:\n{exc}")
+                tk_warn(self, APP_TITLE, frase_errore("Aggiornamento non riuscito.", exc))
                 return
             self.closing_for_update = True
             self.uscita = True

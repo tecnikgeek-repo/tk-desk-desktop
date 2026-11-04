@@ -1125,7 +1125,7 @@ class Motore:
             util.segna_come_scaricato(percorso)
         except OSError as exc:
             _diagnosi(f"file «{voce[2]}» non salvato: {exc!r}")
-            self.s.file_rifiutato.emit(sess.chiave, voce[2], f"non riesco a salvarlo ({exc})")
+            self.s.file_rifiutato.emit(sess.chiave, voce[2], "non riesco a salvarlo: controlla lo spazio e i permessi della cartella")
             return
         self.s.file_ricevuto.emit(sess.chiave, percorso)
 

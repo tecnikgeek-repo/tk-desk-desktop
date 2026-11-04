@@ -490,7 +490,7 @@ def mac_ripristina_permessi():
         r = subprocess.run(["/usr/bin/tccutil", "reset", servizio, "com.tecnikgeek.tkdesk"],
                            capture_output=True, text=True, timeout=15)
         if r.returncode != 0:
-            errori.append(f"{servizio}: {(r.stderr or r.stdout).strip()[:120]}")
+            errori.append(servizio)
     mac_permessi(chiedi=True)
     return " · ".join(errori)
 
