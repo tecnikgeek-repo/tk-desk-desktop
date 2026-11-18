@@ -1,4 +1,4 @@
-# Crea <dist>\tk-desk-<ver>-windows.zip (aggiornamento), <dist>\tk-desk-<ver>-portatile.zip (cartella da estrarre)
+﻿# Crea <dist>\tk-desk-<ver>-windows.zip (aggiornamento), <dist>\tk-desk-<ver>-portatile.zip (cartella da estrarre)
 # e <dist>\tk-desk-setup-<ver>.exe (installazione). Modello: tk-iscrizioni.
 # Venv: .venv del progetto se c'è, altrimenti $env:TKDESK_VENV (predefinito C:\dev\venv-tkdesk).
 # Dist: $env:TKDESK_DIST (predefinito C:\dev\tk-desk-dist), fuori da Dropbox: i pacchetti pesano.
@@ -40,6 +40,12 @@ $pyHome = ($homeLine -replace '^home\s*=\s*', '').Trim()
 # uv mette una giunzione al posto della cartella: via SSH Windows non la attraversa («punto di montaggio non attendibile»)
 $pyTarget = (Get-Item $pyHome).Target
 if ($pyTarget) { $pyHome = @($pyTarget)[0] }
+# Controllo intelligente delle app di Windows blocca i Python non firmati (es. quelli che scarica uv):
+# nel pacchetto va solo il Python ufficiale di python.org, firmato dalla Python Software Foundation
+$pyDll = Get-ChildItem $pyHome -File | Where-Object { $_.Name -match '^python3\d+\.dll$' } | Select-Object -First 1
+if (-not $pyDll -or (Get-AuthenticodeSignature $pyDll.FullName).Status -ne 'Valid') {
+    throw "Il Python del venv ($pyHome) non è firmato: Controllo intelligente delle app lo bloccherebbe. Rifai il venv con il Python ufficiale di python.org: uv venv --python 'C:\Program Files\Python313\python.exe' <venv>"
+}
 $py = Join-Path $stage 'python'
 Robo $pyHome $py @('/XD', 'test', 'tests', 'idlelib', 'tkinter', 'turtledemo', 'tcl', 'include', 'libs', 'Scripts',
                    'ensurepip', 'lib2to3', 'site-packages', '__phello__', 'pydoc_data',
