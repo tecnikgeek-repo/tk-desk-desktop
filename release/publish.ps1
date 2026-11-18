@@ -1,4 +1,4 @@
-# Pubblica una versione di tk-desk per Windows, Mac e Linux: gli utenti la ricevono con l'aggiornamento automatico.
+﻿# Pubblica una versione di tk-desk per Windows, Mac e Linux: gli utenti la ricevono con l'aggiornamento automatico.
 # Uso:  powershell -ExecutionPolicy Bypass -File release\publish.ps1 -Notes "Novita 1|Novita 2" [-SoloWindows]
 # Prima: VERSION alzata in tkdesk\__init__.py e commit fatto (lo script fa push e attende le build Mac e Linux su GitHub).
 # -SoloWindows: solo se le build su GitHub sono bloccate (il manifest esce senza le chiavi mac-* e linux-*;
@@ -34,15 +34,16 @@ try {
 $dist = if ($env:TKDESK_DIST) { $env:TKDESK_DIST } else { 'C:\dev\tk-desk-dist' }
 $winZip = "$dist\tk-desk-$version-windows.zip"
 $winPortable = "$dist\tk-desk-$version-portatile.zip"
-if (-not (Test-Path $winZip) -or -not (Test-Path $winPortable)) {
+if (-not (Test-Path $winZip) -or -not (Test-Path $winPortable) -or -not (Test-Path ($winPortable -replace 'portatile\.zip$', 'installa.zip'))) {
     & powershell -NoProfile -ExecutionPolicy Bypass -File installer\build.ps1
     if ($LASTEXITCODE -ne 0) { throw 'Build Windows fallita' }
 }
 $assets = @(@{ key = 'windows-zip'; file = (Resolve-Path $winZip).Path })
-# installazione .exe: e' il download «Windows» della vetrina (pietrodefilippis.it/scarica-programma/...)
-$setupWin = "$dist\tk-desk-setup-$version.exe"
-if (-not (Test-Path $setupWin)) { throw "Manca l'installazione ${setupWin}: rifai installer\build.ps1" }
-$assets += @{ key = 'windows'; file = (Resolve-Path $setupWin).Path }
+# ZIP di installazione (niente setup.exe, bloccato da Controllo intelligente delle app): e' il download «Windows»
+# della vetrina (pietrodefilippis.it/scarica-programma/...) e l'unico file della cartella Windows di Dropbox
+$winInstall = "$dist\tk-desk-$version-installa.zip"
+if (-not (Test-Path $winInstall)) { throw "Manca ${winInstall}: rifai installer\build.ps1" }
+$assets += @{ key = 'windows-install'; file = (Resolve-Path $winInstall).Path }
 
 # --- Mac e Linux: build su GitHub del commit corrente, dmg e AppImage presi dalla release v<versione>
 if (git status --porcelain --untracked-files=no) { throw 'Ci sono modifiche non committate: fai commit prima di pubblicare' }
@@ -144,18 +145,18 @@ foreach ($f in $uploads) {
 }
 Write-Host "   manifest e file online verificati"
 
-# --- cartella Dropbox: Windows (ZIP portatile), Mac (dmg) e Linux (AppImage), solo l'ultima versione
+# --- cartella Dropbox: Windows (ZIP di installazione), Mac (dmg) e Linux (AppImage), solo l'ultima versione
 New-Item -ItemType Directory -Force "$dropbox\Windows", "$dropbox\Mac", "$dropbox\Linux" | Out-Null
 Get-ChildItem "$dropbox\Windows" -File | Where-Object { $_.Name -notlike "*$version*" } | Remove-Item -Force
-Copy-Item $winPortable "$dropbox\Windows\" -Force
-Copy-Item "$dist\tk-desk-setup-$version.exe" "$dropbox\Windows\" -Force
+Get-ChildItem "$dropbox\Windows" -File | Remove-Item -Force
+Copy-Item $winInstall (Join-Path "$dropbox\Windows" ((Split-Path $winInstall -Leaf) -replace '-installa\.zip$', '-windows.zip')) -Force
 if (-not $SoloWindows) {
     Get-ChildItem "$dropbox\Mac" -File | Where-Object { $_.Name -notlike "*$version*" } | Remove-Item -Force
     foreach ($a in $assets | Where-Object { $_.key -like 'mac-*' }) { Copy-Item $a.file "$dropbox\Mac\" -Force }
     Get-ChildItem "$dropbox\Linux" -File | Where-Object { $_.Name -notlike "*$version*" } | Remove-Item -Force
     foreach ($a in $assets | Where-Object { $_.key -like 'linux-*' }) { Copy-Item $a.file "$dropbox\Linux\" -Force }
 }
-# il progetto sta già in Dropbox (CLAUDE\dev\tk-desk) e su GitHub: niente copia «progetto»
+& robocopy $root "$dropbox\progetto" /MIR /NFL /NDL /NJH /NJS /NP /XD .venv .venv-mac .venv-linux build dist __pycache__ .git Dati /XF *.pyc | Out-Null
 
 if ($SoloWindows) { Write-Host "== tk-desk $version pubblicato SOLO per Windows (Mac e Linux in attesa delle build GitHub)." }
 else { Write-Host "== tk-desk $version pubblicato per Windows, Mac e Linux." }

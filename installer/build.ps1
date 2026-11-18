@@ -153,8 +153,6 @@ $readme = Get-Content "$PSScriptRoot\Leggimi.txt" -Raw -Encoding UTF8
 $portZip = Join-Path $dist "tk-desk-$version-portatile.zip"
 & "$pyHome\python.exe" -c $zipCode (Join-Path $stageRoot 'pack') $portZip
 if ($LASTEXITCODE -ne 0) { throw 'ZIP portatile fallito' }
-# --- installer exe (stesso modello di tk-pdf: setup.cs = strumenti\tk-setup.cs); contiene il pacchetto di aggiornamento
-$csc = "$env:WINDIR\Microsoft.NET\Framework64\v4.0.30319\csc.exe"
 $sizeKb = [int]((Get-ChildItem $stage -Recurse -File | Measure-Object Length -Sum).Sum / 1KB)
 $map = [ordered]@{
     NAME = 'tk-desk'
@@ -173,17 +171,14 @@ $map = [ordered]@{
     VERSION = $version
     SIZEKB = "$sizeKb"
 }
-$setupSrc = Get-Content "$PSScriptRoot\setup.cs" -Raw -Encoding UTF8
-foreach ($k in $map.Keys) { $setupSrc = $setupSrc.Replace("@@$k@@", [string]$map[$k]) }
-$genSrc = Join-Path $stageRoot 'setup.cs'
-[IO.File]::WriteAllText($genSrc, $setupSrc, (New-Object Text.UTF8Encoding($true)))
-$setupExe = Join-Path $dist "tk-desk-setup-$version.exe"
-& $csc /nologo /optimize+ /target:winexe /platform:anycpu /win32icon:"$root\assets\tk-desk.ico" `
-    /reference:System.Windows.Forms.dll /reference:System.Drawing.dll /reference:System.Core.dll `
-    /reference:System.IO.Compression.dll /reference:System.IO.Compression.FileSystem.dll `
-    /resource:"$updateZip",payload.zip /out:"$setupExe" $genSrc
-if ($LASTEXITCODE -ne 0) { throw 'Compilazione installer fallita' }
-Write-Host "   installer: $setupExe ($([math]::Round((Get-Item $setupExe).Length/1MB,1)) MB)"
+# --- ZIP di installazione: niente setup.exe, Controllo intelligente delle app di Windows lo blocca (exe nuovo e non
+#     firmato). Installa tk_installa.py col pythonw.exe del pacchetto, firmato. Impostazioni prese da $map.
+$cfgInstalla = @{ versione = $version; nome = $map.NAME; slug = $map.SLUG; motto = [string]$map.TAGLINE; accento = $map.ACCENT
+    icona = $map.ICON; dati = $map.DATADIR; collegamento = $map.LNK; collegamento_vecchio = $map.LEGACYLNK; chiave = $map.UNINSTALLKEY }
+foreach ($k in @{ REGKEYS = 'chiavi_registro'; REGAPPS = 'app_registrate'; EXTRADATA = 'dati_extra' }.GetEnumerator()) {
+    if ($map.Contains($k.Key) -and $map[$k.Key]) { $cfgInstalla[$k.Value] = @(([string]$map[$k.Key]).Split(';') | Where-Object { $_ }) }
+}
+$installZip = & "$env:USERPROFILE\Dropbox\CLAUDE\tk-software\librerie\tk_zip_installa.ps1" -Stage $stage -Dist $dist -PyHome $pyHome -Cfg $cfgInstalla
 
 $sha = (Get-FileHash $updateZip -Algorithm SHA256).Hash.ToLower()
 Write-Host "== Creati:`n   $portZip ($([math]::Round((Get-Item $portZip).Length/1MB,1)) MB)`n   $updateZip`n   sha256 aggiornamento: $sha"
